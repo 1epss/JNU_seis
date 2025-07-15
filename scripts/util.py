@@ -167,15 +167,6 @@ def get_scnl(st):
     scnl_df = pd.DataFrame(scnl_lst, columns=['network','station','channel'])
     scnl_df.drop_duplicates(inplace=True)
     scnl_df.reset_index(drop=True, inplace=True)
-    
-    st_lst = []
-    sr_lst = []
-    for i, r in scnl_df.iterrows():
-        st_tmp = st.select(network = r.network, station = r.station, channel=f'{r.channel}?')
-        st_lst.append(st_tmp[0].stats.starttime)
-        sr_lst.append(st_tmp[0].stats.sampling_rate)
-    scnl_df['start_time'] = st_lst
-    scnl_df['sampling_rate'] = 100.0
     return scnl_df
 
 def normalize(data, axis=(1,)):
@@ -198,8 +189,7 @@ def getArray(stream, stn, chn, ntw) :
     st2=st2.merge(fill_value=0)
     #st2.taper(max_percentage=0.05, max_length=1.0)
     
-    #st2.filter('bandpass',freqmin=2.0,freqmax=40.0) # band-pass filter with corners at 2 and 40 Hz
-    st2.filter('bandpass',freqmin=1.0,freqmax=45.0) # band-pass filter with corners at 2 and 40 Hz
+    st2.filter('bandpass',freqmin=2.0,freqmax=40.0) # band-pass filter with corners at 2 and 40 Hz
 
     st2 = st2.trim(min([tr.stats.starttime for tr in st2]),
                    max([tr.stats.endtime for tr in st2]),
@@ -207,7 +197,10 @@ def getArray(stream, stn, chn, ntw) :
 
     npts = st2[0].stats.npts
 
-    components = ['E', 'N', 'Z']
+    components=[]
+    for tr in st2:
+        components.append(tr.stats.channel[2])
+
     data = np.zeros((npts, 3))
     for i, comp in enumerate(components) :
         tmp = st2.select(channel=f'{chn}{comp}')
@@ -261,7 +254,7 @@ def picking(net, stn, chn, st, twin, stride, model):
     y1, y2, y3 = Y_med.shape
     Y_med = Y_med.reshape(y1* y2, y3)
     
-    return data, Y_med
+    return data, Y_med, startT
 
 def plot_results(net, stn, chn, data_total, Y_total):    
     fig = plt.figure(figsize=(7,5))
@@ -290,7 +283,7 @@ def plot_results(net, stn, chn, data_total, Y_total):
     plt.show() 
 
 
-def get_picks(Y_total, net, stn, chn, sttime, sr):
+def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     arr_lst = []
     P_idx, P_prob = detect_peaks(Y_total[:,0], mph=.3, mpd=50, show=False)
     S_idx, S_prob = detect_peaks(Y_total[:,1], mph=.3, mpd=50, show=False)    
