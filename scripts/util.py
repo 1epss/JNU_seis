@@ -335,7 +335,7 @@ def calc_relative_distance(data):
     기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산합니다.
 
     기준점은 `data['P_trv']`가 최소인 관측소의 (Stlat, Stlon)입니다.
-    경도 → km 환산에는 기준 위도 φ0에서 cos(φ0)을 곱하는 근사를 사용합니다.
+    경도 → km 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 사용합니다.
 
     Parameters
     ----------
@@ -710,7 +710,7 @@ def make_folium_hypo_map(
         name="Esri World Imagery",
     )
 
-    # 진원 마커 (빨간 별)
+    # 진원 마커
     folium.Marker(
         location=[hypo_lat, hypo_lon],
         icon=folium.Icon(color="red", icon="star", prefix="fa"),
