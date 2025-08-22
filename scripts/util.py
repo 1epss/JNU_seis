@@ -10,7 +10,7 @@ from scipy.sparse.linalg import cg
 
 # ====== Module metadata ======
 __title__ = "util"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Yoontaek Hong, Mingyu Doo"
 __license__ = "MIT"
 
@@ -330,12 +330,85 @@ def load_data(pkl_path):
     return data
 
 
+def _calc_deg2km(standard_lat, standard_lon, lat, lon):
+    """
+    위경도 좌표(도)를 기준점 대비 남북/동서 거리(km)로 변환합니다.
+
+    Notes
+    -----
+    - 변환 결과는 (y, x) 순으로 반환합니다.
+      y = 북쪽(+) / 남쪽(−) 거리 [km]
+      x = 동쪽(+) / 서쪽(−) 거리 [km]
+    - 경도(동서) 환산 시 주어진 위도(lat)에 대해 cos 보정을 적용합니다.
+
+    Parameters
+    ----------
+    standard_lat : float
+        기준점 위도(도)
+    standard_lon : float
+        기준점 경도(도)
+    lat : float or array_like
+        변환할 위도(도)
+    lon : float or array_like
+        변환할 경도(도)
+
+    Returns
+    -------
+    y : float or ndarray
+        기준점 대비 남북 거리(km)
+    x : float or ndarray
+        기준점 대비 동서 거리(km)
+    """
+    dlat = lat - standard_lat
+    dlon = lon - standard_lon
+    x = dlon * (111.32 * np.cos(np.radians(lat)))
+    y = dlat * 111.32
+    return y, x
+
+
+def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
+    """
+    기준점으로부터의 남북/동서 거리(km)를 위경도 좌표(도)로 변환합니다.
+
+    Notes
+    -----
+    - 입력은 (y_km, x_km) 순서입니다.
+      y_km = 북쪽(+) / 남쪽(−) 거리 [km]
+      x_km = 동쪽(+) / 서쪽(−) 거리 [km]
+    - 경도(동서) 환산 시 결과 위도(lat)에 대해 cos 보정을 적용합니다.
+
+    Parameters
+    ----------
+    standard_lat : float
+        기준점 위도(도)
+    standard_lon : float
+        기준점 경도(도)
+    y_km : float
+        기준점 대비 남북 거리(km) (+북/−남)
+    x_km : float
+        기준점 대비 동서 거리(km) (+동/−서)
+
+    Returns
+    -------
+    lat : float
+        변환된 위도(도)
+    lon : float
+        변환된 경도(도)
+    """
+    dlat = y_km / 111.32
+    y = dlat + standard_lat
+    dlon = x_km / (111.32 * np.cos(np.radians(y)))
+    x = dlon + standard_lon
+    return y, x
+
+
 def calc_relative_distance(data):
     """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산합니다.
+    기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산하여 반환합니다.
 
     기준점은 `data['P_trv']`가 최소인 관측소의 (Stlat, Stlon)입니다.
-    경도 → km 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 사용합니다.
+    변환은 내부적으로 `_calc_deg2km` 함수를 사용하며,
+    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
 
     Parameters
     ----------
@@ -347,31 +420,31 @@ def calc_relative_distance(data):
     -------
     data : pandas.DataFrame
         Easting_km, Northing_km 열이 추가된 DataFrame
-    x_list : list[float]
+    data["Easting_km"].tolist() : list[float]
         관측소별 동서 거리(km) 리스트 (동쪽 +)
-    y_list : list[float]
+    data["Northing_km"] : list[float]
         관측소별 남북 거리(km) 리스트 (북쪽 +)
     """
     lat_zero = data.loc[data["P_trv"].idxmin(), "Stlat"]
     lon_zero = data.loc[data["P_trv"].idxmin(), "Stlon"]
-    dlat = data["Stlat"] - lat_zero
-    dlon = data["Stlon"] - lon_zero
-    x_list = (dlon * (111.0 * np.cos(np.radians(lat_zero)))).tolist()
-    y_list = (dlat * 111.0).tolist()
-    data["Easting_km"] = x_list
-    data["Northing_km"] = y_list
-    return data, x_list, y_list
+
+    northing_km, easting_km = _calc_deg2km(
+        lat_zero, lon_zero, data["Stlat"].to_numpy(), data["Stlon"].to_numpy()
+    )
+
+    data = data.copy()
+    data["Easting_km"] = easting_km.tolist()
+    data["Northing_km"] = northing_km.tolist()
+    return data, data["Easting_km"].tolist(), data["Northing_km"].tolist()
 
 
 def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)에서 진원까지의 남북/동서 거리(km)를 위경도 변화(도)로 변환하여
-    진원의 위경도 좌표(도)를 반환합니다.
+    기준점(가장 먼저 P파가 도달한 관측소의 위경도)에서 진원까지의 남북/동서 거리(km)를 위경도 변화(도)로 변환하여 진원의 위경도 좌표(도)를 반환합니다.
 
-    Notes
-    -----
-    - `hypo_lat_km`는 **남북 거리(+북/−남)**, `hypo_lon_km`는 **동서 거리(+동/−서)**로 해석합니다.
-    - 경도(동서) 환산 시 기준 위도에 대해 cos 보정을 적용합니다.
+    기준점은 `data['P_trv']`가 최소인 관측소의 (Stlat, Stlon)입니다.
+    변환은 내부적으로 `_calc_km2deg` 함수를 사용하며,
+    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
 
     Parameters
     ----------
@@ -391,10 +464,9 @@ def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     """
     lat_zero = data.loc[data["P_trv"].idxmin(), "Stlat"]
     lon_zero = data.loc[data["P_trv"].idxmin(), "Stlon"]
-    dlat = hypo_lat_km / 111.0
-    dlon = hypo_lon_km / (111.0 * np.cos(np.radians(lat_zero)))
-    hypo_lat_deg = lat_zero + dlat
-    hypo_lon_deg = lon_zero + dlon
+    hypo_lat_deg, hypo_lon_deg = _calc_km2deg(
+        lat_zero, lon_zero, hypo_lat_km, hypo_lon_km
+    )
     return hypo_lat_deg, hypo_lon_deg
 
 
@@ -457,7 +529,7 @@ def calc_pred(mp, vp, vs, data):
     """
     dx = data.Easting_km - mp[0]  # 동서
     dy = data.Northing_km - mp[1]  # 남북
-    dz = mp[2] - data.elevation  # 깊이(+아래) - 고도(+위)
+    dz = data.elevation - mp[2]  # 깊이
     hypo_dist = np.sqrt(dx**2 + dy**2 + dz**2)
     data["hypo_dist_pred"] = hypo_dist
     data["P_trv_pred"] = hypo_dist / vp
@@ -631,7 +703,6 @@ def total_run(iteration, mp, vp, vs, data):
 
         G = calc_G(mp, vp, vs, data, valid_s)
         res, rms = Calc_rms(res_p, res_s)
-
         dm = get_dm(G, res)
         mp = mp + dm
 
@@ -710,7 +781,7 @@ def make_folium_hypo_map(
         name="Esri World Imagery",
     )
 
-    # 진원 마커
+    # 진원 마커 (빨간 별)
     folium.Marker(
         location=[hypo_lat, hypo_lon],
         icon=folium.Icon(color="red", icon="star", prefix="fa"),
