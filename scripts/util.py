@@ -34,7 +34,7 @@ def get_scnl(st):
     scnl_lst = []
     for tr in st:
         scnl_lst.append([tr.stats.network, tr.stats.station, tr.stats.channel[:2]])
-    scnl_df = pd.DataFrame(scnl_lst, columns=["network", "station", "channel"])
+    scnl_df = pd.DataFrame(scnl_lst, columns=["Network", "Station", "Channel"])
     scnl_df.drop_duplicates(inplace=True)
     scnl_df.reset_index(drop=True, inplace=True)
     return scnl_df
@@ -529,7 +529,7 @@ def calc_pred(mp, vp, vs, data):
     """
     dx = data.Easting_km - mp[0]  # 동서
     dy = data.Northing_km - mp[1]  # 남북
-    dz = data.elevation - mp[2]  # 깊이
+    dz = data.elevation / 1000 - mp[2]  # 깊이
     hypo_dist = np.sqrt(dx**2 + dy**2 + dz**2)
     data["hypo_dist_pred"] = hypo_dist
     data["P_trv_pred"] = hypo_dist / vp
@@ -616,7 +616,7 @@ def calc_G(mp, vp, vs, data, valid_s):
         np.sqrt(
             (mp[0] - data.Easting_km) ** 2
             + (mp[1] - data.Northing_km) ** 2
-            + (mp[2] - data.elevation) ** 2
+            + (mp[2] - (data.elevation / 1000)) ** 2
         )
         + 1e-12
     )  # 0-나눗셈 방지용 eps
@@ -624,7 +624,7 @@ def calc_G(mp, vp, vs, data, valid_s):
     # P파 G (모든 관측소)
     G_x_p = (mp[0] - data.Easting_km) / (vp * R_all)
     G_y_p = (mp[1] - data.Northing_km) / (vp * R_all)
-    G_z_p = (mp[2] - data.elevation) / (vp * R_all)
+    G_z_p = (mp[2] - (data.elevation / 1000)) / (vp * R_all)
     G_t_p = np.ones(len(data))
     G_p = np.vstack([G_x_p, G_y_p, G_z_p, G_t_p]).T
 
@@ -635,13 +635,13 @@ def calc_G(mp, vp, vs, data, valid_s):
             np.sqrt(
                 (mp[0] - data.Easting_km[m]) ** 2
                 + (mp[1] - data.Northing_km[m]) ** 2
-                + (mp[2] - data.elevation[m]) ** 2
+                + (mp[2] - (data.elevation[m] / 1000)) ** 2
             )
             + 1e-12
         )
         G_x_s = (mp[0] - data.Easting_km[m]) / (vs * R_s)
         G_y_s = (mp[1] - data.Northing_km[m]) / (vs * R_s)
-        G_z_s = (mp[2] - data.elevation[m]) / (vs * R_s)
+        G_z_s = (mp[2] - (data.elevation[m] / 1000)) / (vs * R_s)
         G_t_s = np.ones(int(np.count_nonzero(m)))
         G_s = np.vstack([G_x_s, G_y_s, G_z_s, G_t_s]).T
         G = np.vstack([G_p, G_s])
