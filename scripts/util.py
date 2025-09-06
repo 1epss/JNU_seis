@@ -15,6 +15,66 @@ __author__ = "Yoontaek Hong, Mingyu Doo"
 __license__ = "MIT"
 
 
+
+def quick_pick(wf, pred, sr, sttime, net, sta, chn, mph=0.30, mpd=50, show_plot=True):
+    """
+    KFpicker 출력(pred)에서 P/S 피크를 찾아 도달시각과 확률을 표로 반환하고,
+    기본 파형/확률 플롯을 그려주는 간단 실행 함수.
+
+    Parameters
+    ----------
+    wf : ndarray [batch, time, 3]
+        ENZ 순서의 파형(여기서는 wf[0] 사용).
+    pred : ndarray [batch, time, 3]
+        KFpicker 확률 맵(P,S,Noise).
+    sr : float
+        샘플레이트(Hz).
+    sttime : UTCDateTime (또는 datetime)
+        파형 시작시각.
+    net, sta, chn : str
+        네트워크/관측소/채널.
+    mph : float
+        피크 최소 높이(threshold).
+    mpd : int
+        피크 간 최소 간격(샘플 수).
+    show_plot : bool
+        True면 플롯 표시.
+
+    Returns
+    -------
+    DataFrame
+        ['network','station','channel','arr','prob','phase'] 컬럼의 정렬된 표.
+    """
+    # ----- Plot (4패널, 공유 x축) -----
+    if show_plot:
+        fig, axes = plt.subplots(4, 1, figsize=(7, 5), sharex=True)
+        axes[0].plot(wf[0, :, 2], 'k', label='E'); axes[0].legend(loc='upper right')
+        axes[1].plot(wf[0, :, 1], 'k', label='N'); axes[1].legend(loc='upper right')
+        axes[2].plot(wf[0, :, 0], 'k', label='Z'); axes[2].legend(loc='upper right')
+        axes[3].plot(pred[0, :, 0], label='P')
+        axes[3].plot(pred[0, :, 1], label='S')
+        axes[3].plot(pred[0, :, 2], label='Noise')
+        axes[3].legend(loc='upper right', ncol=3)
+        fig.tight_layout()
+        plt.show()
+
+    # ----- Peak picking (기존 detect_peaks 사용 가정) -----
+    P_idx, P_prob = detect_peaks(pred[0, :, 0], mph=mph, mpd=mpd, show=False)
+    S_idx, S_prob = detect_peaks(pred[0, :, 1], mph=mph, mpd=mpd, show=False)
+
+    rows = []
+    for i, p_idx in enumerate(P_idx):
+        p_arr = sttime + (p_idx / sr)
+        rows.append([net, sta, chn, p_arr, float(P_prob[i]), 'P'])
+    for j, s_idx in enumerate(S_idx):
+        s_arr = sttime + (s_idx / sr)
+        rows.append([net, sta, chn, s_arr, float(S_prob[j]), 'S'])
+
+    df = pd.DataFrame(rows, columns=['network','station','channel','arr','prob','phase'])
+    df.sort_values('arr', inplace=True, ignore_index=True)
+    return df
+
+
 def get_scnl(st):
     """
     ObsPy Stream에서 (network, station, channel-2글자 prefix) 조합을 추출해
@@ -308,6 +368,65 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
         s_arr = sttime + (s_idx / sr)
         arr_lst.append([net, stn, chn, s_arr, S_prob[idx_], "S"])
     return arr_lst
+
+
+def run_pipeline(st, model, origintime, station_xlsx, twin=3000, stride=3000):
+    # 1) SCNL 목록
+    scnl_df = get_scnl(st)
+
+    # 2) 피킹 실행
+    Y_total = []
+    data_total = []
+    startT_total = []
+    for idx, row in tqdm(scnl_df.iterrows(), total=len(scnl_df), desc="Picking"):
+        data, Y_med, startT = picking(
+            row.Network, row.Station, row.Channel,
+            st.copy(), twin=twin, stride=stride, model=model,
+        )
+        data_total.append(data)
+        Y_total.append(Y_med)
+        startT_total.append(startT)
+    data_total = np.stack(data_total, axis=0)
+    Y_total = np.stack(Y_total, axis=0)
+    scnl_df['start_time'] = startT_total
+
+    # 3) 피크 테이블 정리
+    picks_total = pd.DataFrame()
+    for idx, row in tqdm(scnl_df.iterrows(), total=len(scnl_df), desc="Build picks table"):
+        arr_lst = get_picks(Y_total[idx], row.Network, row.Station, row.Channel, row.start_time)
+        picks = pd.DataFrame(arr_lst, columns=['Network','Station','Channel','arr','prob','phase'])
+        picks_total = pd.concat([picks_total, picks], ignore_index=True)
+    picks_total.sort_values(by=['arr'], inplace=True)
+
+
+    # 4) 메타데이터 병합
+    df_xlsx = pd.read_excel(station_xlsx)
+    merged_df = picks_total.merge(
+        df_xlsx[["Network", "Station", "Stlat", "Stlon", "elevation"]],
+        on=["Network","Station"], how="left"
+    )
+    pivot_df = merged_df.pivot_table(
+        index=["Network","Station","Channel","Stlat","Stlon","elevation"],
+        columns="phase",
+        values=["arr","prob"],
+        aggfunc="first",
+    )
+    pivot_df.columns = [f"{ph}_{col}" for col, ph in pivot_df.columns]
+    pivot_df = pivot_df.reset_index()
+
+    # 5) 주행시간 계산
+    data = pivot_df.copy()
+    if "P_arr" in data.columns:
+        data["P_trv"] = data["P_arr"].apply(lambda x: UTCDateTime(x) - origintime if pd.notna(x) else None)
+    if "S_arr" in data.columns:
+        data["S_trv"] = data["S_arr"].apply(lambda x: UTCDateTime(x) - origintime if pd.notna(x) else None)
+    data['P_arr'] = data.get('P_trv', None)
+    data['S_arr'] = data.get('S_trv', None)
+
+    # 6) 상대 거리 계산
+    data_rel, x_list, y_list = calc_relative_distance(data)
+    return data_rel, x_list, y_list, data_total, Y_total, picks_total
+
 
 
 def load_data(pkl_path):
@@ -1090,3 +1209,6 @@ def _plot(x, mph, mpd, threshold, edge, valley, ax, ind, title):
         # plt.grid()
         if no_ax:
             plt.show()
+
+            
+        
