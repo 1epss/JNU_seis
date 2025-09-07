@@ -337,7 +337,7 @@ def batch_picking(
     -------
     picks_total : DataFrame
         모든 관측소/채널에 대한 도달시각 테이블
-        ['network','station','channel','arr','prob','phase'].
+        ['Network','Station','Channel','arr','prob','phase'].
     """
     scnl_df = get_scnl(st)
 
@@ -372,12 +372,12 @@ def batch_picking(
         if arr_lst:
             picks = pd.DataFrame(
                 arr_lst,
-                columns=["network", "station", "channel", "arr", "prob", "phase"]
+                columns=["Network", "Station", "Channel", "arr", "prob", "phase"]
             )
             picks_total.append(picks)
 
     picks_total = pd.concat(picks_total, ignore_index=True) if picks_total else pd.DataFrame(
-        columns=["network", "station", "channel", "arr", "prob", "phase"]
+        columns=["Network", "Station", "Channel", "arr", "prob", "phase"]
     )
     picks_total.sort_values(by=["arr"], inplace=True, ignore_index=True)
 
