@@ -15,66 +15,6 @@ __author__ = "Yoontaek Hong, Mingyu Doo"
 __license__ = "MIT"
 
 
-
-def quick_pick(wf, pred, sr, sttime, net, sta, chn, mph=0.30, mpd=50, show_plot=True):
-    """
-    KFpicker 출력(pred)에서 P/S 피크를 찾아 도달시각과 확률을 표로 반환하고,
-    기본 파형/확률 플롯을 그려주는 간단 실행 함수.
-
-    Parameters
-    ----------
-    wf : ndarray [batch, time, 3]
-        ENZ 순서의 파형(여기서는 wf[0] 사용).
-    pred : ndarray [batch, time, 3]
-        KFpicker 확률 맵(P,S,Noise).
-    sr : float
-        샘플레이트(Hz).
-    sttime : UTCDateTime (또는 datetime)
-        파형 시작시각.
-    net, sta, chn : str
-        네트워크/관측소/채널.
-    mph : float
-        피크 최소 높이(threshold).
-    mpd : int
-        피크 간 최소 간격(샘플 수).
-    show_plot : bool
-        True면 플롯 표시.
-
-    Returns
-    -------
-    DataFrame
-        ['network','station','channel','arr','prob','phase'] 컬럼의 정렬된 표.
-    """
-    # ----- Plot (4패널, 공유 x축) -----
-    if show_plot:
-        fig, axes = plt.subplots(4, 1, figsize=(7, 5), sharex=True)
-        axes[0].plot(wf[0, :, 2], 'k', label='E'); axes[0].legend(loc='upper right')
-        axes[1].plot(wf[0, :, 1], 'k', label='N'); axes[1].legend(loc='upper right')
-        axes[2].plot(wf[0, :, 0], 'k', label='Z'); axes[2].legend(loc='upper right')
-        axes[3].plot(pred[0, :, 0], label='P')
-        axes[3].plot(pred[0, :, 1], label='S')
-        axes[3].plot(pred[0, :, 2], label='Noise')
-        axes[3].legend(loc='upper right', ncol=3)
-        fig.tight_layout()
-        plt.show()
-
-    # ----- Peak picking (기존 detect_peaks 사용 가정) -----
-    P_idx, P_prob = detect_peaks(pred[0, :, 0], mph=mph, mpd=mpd, show=False)
-    S_idx, S_prob = detect_peaks(pred[0, :, 1], mph=mph, mpd=mpd, show=False)
-
-    rows = []
-    for i, p_idx in enumerate(P_idx):
-        p_arr = sttime + (p_idx / sr)
-        rows.append([net, sta, chn, p_arr, float(P_prob[i]), 'P'])
-    for j, s_idx in enumerate(S_idx):
-        s_arr = sttime + (s_idx / sr)
-        rows.append([net, sta, chn, s_arr, float(S_prob[j]), 'S'])
-
-    df = pd.DataFrame(rows, columns=['network','station','channel','arr','prob','phase'])
-    df.sort_values('arr', inplace=True, ignore_index=True)
-    return df
-
-
 def get_scnl(st):
     """
     ObsPy Stream에서 (network, station, channel-2글자 prefix) 조합을 추출해
