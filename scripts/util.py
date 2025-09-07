@@ -23,13 +23,13 @@ def get_scnl(st):
     Parameters
     ----------
     st : obspy.Stream
-        입력 스트림. 각 trace의 stats.network, stats.station, stats.channel을 사용.
+        Input Stream. 각 trace의 stats.network, stats.station, stats.channel을 사용.
 
     Returns
     -------
     pandas.DataFrame
-        컬럼 ['network', 'station', 'channel'].
-        channel은 예: 'HH', 'EH' 같은 2글자 prefix.
+        Column ['Network', 'Station', 'Channel'].
+        Channel은 'HH', 'HG' 등 2글자 prefix.
     """
     scnl_lst = []
     for tr in st:
@@ -42,7 +42,7 @@ def get_scnl(st):
 
 def normalize(data, axis=(1,)):
     """
-    data를 주어진 축(axis)에 대해 평균 0, 표준편차 1로 정규화합니다(제자리 연산).
+    data를 주어진 축(axis)에 대해 평균 0, 표준편차 1로 정규화합니다.
 
     Notes
     -----
@@ -52,7 +52,7 @@ def normalize(data, axis=(1,)):
     Parameters
     ----------
     data : np.ndarray
-        보통 (n_window, twin, n_channel) 또는 (nstn, twin, n_channel) 형태.
+        (n_window, twin, n_channel) 또는 (nstn, twin, n_channel) 형태.
     axis : tuple[int], optional
         평균/표준편차를 계산할 축. 기본값 (1,)은 시간축 twin에 대해 정규화.
 
@@ -72,24 +72,26 @@ def getArray(stream, stn, chn, ntw):
     """
     특정 (network, station, channel-prefix)에 해당하는 3성분 데이터를 추출/전처리합니다.
 
-    처리 순서: select → detrend → (필요 시) resample(100 Hz) → merge(제로패딩) →
+    Notes
+    -----
+    select → detrend → (필요 시) resample(100 Hz) → merge(제로패딩) →
     bandpass(2–40 Hz) → 공통 구간으로 trim.
 
     Parameters
     ----------
     stream : obspy.Stream
-        원본 스트림.
+        원본 Stream.
     stn : str
         대상 station 코드.
     chn : str
-        채널 prefix (예: 'HH', 'EH'). 실제 채널은 f'{chn}?', 즉 HHE/HHN/HHZ 형태로 선택.
+        채널 prefix (예: 'HH', 'HG'). 실제 채널은 f'{chn}?', 즉 HHE/HHN/HHZ 형태로 선택.
     ntw : str
         network 코드.
 
     Returns
     -------
     data : np.ndarray
-        shape (npts, 3). 열 순서는 탐지된 component 순서대로 채워짐(E/N/Z 보장 아님).
+        shape (npts, 3). 열 순서는 탐지된 component 순서대로 채워짐.
     starttime : obspy.UTCDateTime
         trim 후 데이터의 시작 시각.
 
@@ -104,11 +106,10 @@ def getArray(stream, stn, chn, ntw):
     if need_resampling:
         st2.resample(100.0)
     st2 = st2.merge(fill_value=0)
-    # st2.taper(max_percentage=0.05, max_length=1.0)
 
     st2.filter(
         "bandpass", freqmin=2.0, freqmax=40.0
-    )  # band-pass filter with corners at 2 and 40 Hz
+    )
 
     st2 = st2.trim(
         min([tr.stats.starttime for tr in st2]),
@@ -184,7 +185,7 @@ def getSegment(data, startT, stn, chn, ntw, twin=3000, tshift=500):
 
 def picking(net, stn, chn, st, twin, stride, model):
     """
-    모델을 사용해 세그먼트 단위 확률(Y)을 예측하고, 겹침 보정(중앙값 융합)으로
+    모델을 사용해 Segment 단위 확률(Y)을 예측하고, 겹침 보정(중앙값 융합)으로
     최종 시계열 확률을 생성합니다.
 
     Parameters
@@ -275,7 +276,7 @@ def plot_results(net, stn, chn, data_total, Y_total):
 
 def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     """
-    확률 시퀀스에서 P/S 봉우리(피크)를 검출해 도달시각 리스트를 생성합니다.
+    확률 시퀀스에서 P/S 피크를 검출해 도달시각 리스트를 생성합니다.
 
     Parameters
     ----------
@@ -292,11 +293,6 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     -------
     list[list]
         각 원소 = [net, stn, chn, arrival_time(UTCDateTime), confidence, phase('P'|'S')]
-
-    Notes
-    -----
-    - `detect_peaks`에 의존합니다. 반환 형식은 (indices, scores)로 가정.
-      구현에 따라 두 번째 반환값이 확률/점수/None일 수 있으니 필요 시 수정하세요.
     """
     arr_lst = []
     P_idx, P_prob = detect_peaks(Y_total[:, 0], mph=0.3, mpd=50, show=False)
@@ -310,63 +306,82 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     return arr_lst
 
 
-def run_pipeline(st, model, origintime, station_xlsx, twin=3000, stride=3000):
-    # 1) SCNL 목록
+def batch_picking(
+    st,
+    model,
+    twin: int = 3000,
+    stride: int = 3000,
+    plot: bool = True,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """
+    여러 SCNL에 대해 일괄 픽킹을 수행하고, 필요 시 결과 플롯을 그린 뒤,
+    모든 도달시각 테이블(picks_total)만 반환.
+
+    Parameters
+    ----------
+    st : Stream-like
+        원본 파형(ObsPy Stream 등). 내부에서 copy()하여 사용.
+    model : Any
+        KFpicker 등 예측에 사용할 모델 객체.
+    twin : int, default 3000
+        윈도 길이(샘플 수).
+    stride : int, default 3000
+        슬라이딩 간격(샘플 수).
+    plot : bool, default True
+        True이면 각 SCNL별 결과 플롯 생성.
+    verbose : bool, default False
+        True이면 진행 상황 출력.
+
+    Returns
+    -------
+    picks_total : DataFrame
+        모든 관측소/채널에 대한 도달시각 테이블
+        ['network','station','channel','arr','prob','phase'].
+    """
     scnl_df = get_scnl(st)
 
-    # 2) 피킹 실행
-    Y_total = []
-    data_total = []
-    startT_total = []
-    for idx, row in tqdm(scnl_df.iterrows(), total=len(scnl_df), desc="Picking"):
+    Y_buf = []
+    startT_buf = []
+
+    # 각 SCNL에 대해 예측
+    for _, row in scnl_df.iterrows():
+        net, sta, ch = row.Network, row.Station, row.Channel
+        if verbose:
+            print(f"{net}.{sta}..{ch}")
+
         data, Y_med, startT = picking(
-            row.Network, row.Station, row.Channel,
-            st.copy(), twin=twin, stride=stride, model=model,
+            net, sta, ch, st.copy(),
+            twin=twin, stride=stride, model=model
         )
-        data_total.append(data)
-        Y_total.append(Y_med)
-        startT_total.append(startT)
-    data_total = np.stack(data_total, axis=0)
-    Y_total = np.stack(Y_total, axis=0)
-    scnl_df['start_time'] = startT_total
+        Y_buf.append(Y_med)
+        startT_buf.append(startT)
 
-    # 3) 피크 테이블 정리
-    picks_total = pd.DataFrame()
-    for idx, row in tqdm(scnl_df.iterrows(), total=len(scnl_df), desc="Build picks table"):
-        arr_lst = get_picks(Y_total[idx], row.Network, row.Station, row.Channel, row.start_time)
-        picks = pd.DataFrame(arr_lst, columns=['Network','Station','Channel','arr','prob','phase'])
-        picks_total = pd.concat([picks_total, picks], ignore_index=True)
-    picks_total.sort_values(by=['arr'], inplace=True)
+        if plot:
+            plot_results(net, sta, ch, data, Y_med)
 
+    # start_time 기록
+    scnl_df = scnl_df.copy()
+    scnl_df["start_time"] = startT_buf
 
-    # 4) 메타데이터 병합
-    df_xlsx = pd.read_excel(station_xlsx)
-    merged_df = picks_total.merge(
-        df_xlsx[["Network", "Station", "Stlat", "Stlon", "elevation"]],
-        on=["Network","Station"], how="left"
+    # 모든 SCNL에 대해 픽 테이블 만들기
+    picks_total = []
+    for idx, row in scnl_df.iterrows():
+        arr_lst = get_picks(Y_buf[idx], row.Network, row.Station,
+                            row.Channel, row.start_time)
+        if arr_lst:
+            picks = pd.DataFrame(
+                arr_lst,
+                columns=["network", "station", "channel", "arr", "prob", "phase"]
+            )
+            picks_total.append(picks)
+
+    picks_total = pd.concat(picks_total, ignore_index=True) if picks_total else pd.DataFrame(
+        columns=["network", "station", "channel", "arr", "prob", "phase"]
     )
-    pivot_df = merged_df.pivot_table(
-        index=["Network","Station","Channel","Stlat","Stlon","elevation"],
-        columns="phase",
-        values=["arr","prob"],
-        aggfunc="first",
-    )
-    pivot_df.columns = [f"{ph}_{col}" for col, ph in pivot_df.columns]
-    pivot_df = pivot_df.reset_index()
+    picks_total.sort_values(by=["arr"], inplace=True, ignore_index=True)
 
-    # 5) 주행시간 계산
-    data = pivot_df.copy()
-    if "P_arr" in data.columns:
-        data["P_trv"] = data["P_arr"].apply(lambda x: UTCDateTime(x) - origintime if pd.notna(x) else None)
-    if "S_arr" in data.columns:
-        data["S_trv"] = data["S_arr"].apply(lambda x: UTCDateTime(x) - origintime if pd.notna(x) else None)
-    data['P_arr'] = data.get('P_trv', None)
-    data['S_arr'] = data.get('S_trv', None)
-
-    # 6) 상대 거리 계산
-    data_rel, x_list, y_list = calc_relative_distance(data)
-    return data_rel, x_list, y_list, data_total, Y_total, picks_total
-
+    return picks_total
 
 
 def load_data(pkl_path):
@@ -785,7 +800,7 @@ def make_folium_hypo_map(
     use_auto_label=True,
 ):
     """
-    Folium으로 관측소/진원 시각화를 수행하고 HTML 파일로 저장.
+    Folium으로 관측소/진원 시각화를 수행하고 HTML 파일로 저장합니다.
 
     Parameters
     ----------
@@ -927,6 +942,78 @@ def make_folium_hypo_map(
     # 저장 및 리턴
     m.save(html_out)
     return m, (hypo_lat, hypo_lon), html_out
+
+
+def build_relative_dataset(picks_total, station_xlsx, origin_time):
+    """
+    픽 테이블과 관측소 메타를 병합·피벗한 뒤,
+    원시여진 시각(origin_time) 기준 주행시간을 계산하고
+    상대 위치/거리 테이블을 생성합니다.
+
+    Parameters
+    ----------
+    picks_total : pandas.DataFrame
+        ['Network','Station','Channel','arr','prob','phase'] 컬럼을 포함한 픽 테이블.
+        - 'phase'는 'P' 또는 'S'
+        - 'arr'은 도달시각(파싱 가능한 datetime/UTCDateTime/문자열)
+    station_xlsx : str
+        관측소 메타 엑셀 파일 경로.
+        필요한 컬럼: ['Network','Station','Stlat','Stlon','elevation'].
+    origin_time : obspy.UTCDateTime
+        원시여진(이벤트) 기준 시각.
+
+    Returns
+    -------
+    data_rel : pandas.DataFrame
+        calc_relative_distance() 결과 테이블.
+    x_list : list
+        상대 동서 거리 리스트(km).
+    y_list : list
+        상대 남북 거리 리스트(km).
+
+    Notes
+    -----
+    - 피벗 후 컬럼은 'P_arr', 'S_arr', 'P_prob', 'S_prob' 형태로 생성됩니다.
+    - 'P_trv', 'S_trv'는 origin_time 대비 주행시간(초)로 계산됩니다.
+    - 최종 data에는 표시용으로 'P_arr','S_arr' 별칭을 'P_trv','S_trv'로 덮어씁니다.
+    """
+    # 1) 관측소 메타 읽기 + 병합
+    df_xlsx = pd.read_excel(station_xlsx)
+    merged_df = picks_total.merge(
+        df_xlsx[["Network", "Station", "Stlat", "Stlon", "elevation"]],
+        on=["Network", "Station"],
+        how="left",
+    )
+
+    # 2) phase별 첫 픽으로 피벗 (arr, prob)
+    pivot_df = merged_df.pivot_table(
+        index=["Network", "Station", "Channel", "Stlat", "Stlon", "elevation"],
+        columns="phase",
+        values=["arr", "prob"],
+        aggfunc="first",
+    )
+    # → 'P_arr', 'S_arr', 'P_prob', 'S_prob' 형태의 단일 컬럼으로 변환
+    pivot_df.columns = [f"{ph}_{col}" for col, ph in pivot_df.columns]
+    pivot_df = pivot_df.reset_index()
+
+    # 3) origin_time 기준 주행시간 계산
+    data = pivot_df.copy()
+    if "P_arr" in data.columns:
+        data["P_trv"] = data["P_arr"].apply(
+            lambda x: UTCDateTime(x) - origin_time if pd.notna(x) else None
+        )
+    if "S_arr" in data.columns:
+        data["S_trv"] = data["S_arr"].apply(
+            lambda x: UTCDateTime(x) - origin_time if pd.notna(x) else None
+        )
+
+    # 표시·호환용: P_arr/S_arr에 주행시간 별칭 덮어쓰기
+    data["P_arr"] = data.get("P_trv", None)
+    data["S_arr"] = data.get("S_trv", None)
+
+    # 4) 상대 위치/거리 계산 (사용자 정의 함수)
+    data_rel, x_list, y_list = calc_relative_distance(data)
+    return data_rel, x_list, y_list
 
 
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
