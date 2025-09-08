@@ -75,7 +75,7 @@ def getArray(stream, stn, chn, ntw):
 
     Notes
     -----
-    select → detrend → (필요 시) resample(100 Hz) → merge(제로패딩) →
+    select → detrend → (필요 시) resample(100 Hz) → merge →
     bandpass(2–40 Hz) → 공통 구간으로 trim.
 
     Parameters
@@ -139,7 +139,7 @@ def getArray(stream, stn, chn, ntw):
 
 def getSegment(data, startT, stn, chn, ntw, twin=3000, tshift=500):
     """
-    3성분 시계열을 길이 `twin`(샘플)로 잘라 겹치기(`tshift` 간격) 윈도우 배열을 만듭니다.
+    3성분 시계열을 길이 `twin`(샘플)로 잘라 `tshift` (간격)으로 겹치는 시간창 배열을 만듭니다.
 
     Parameters
     ----------
@@ -150,9 +150,9 @@ def getSegment(data, startT, stn, chn, ntw, twin=3000, tshift=500):
     stn, chn, ntw : str
         메타 정보(메타 리스트에 저장).
     twin : int
-        한 세그먼트 길이(샘플 단위). 예: 3000 → 100 Hz에서 30초.
+        Window 길이(샘플). 예: 3000 → 100 Hz에서 30초.
     tshift : int
-        윈도우 간 이동량(샘플 단위). 예: 500 → 100 Hz에서 5초.
+        window 사이 shift(샘플). 예: 500 → 100 Hz에서 5초.
 
     Returns
     -------
@@ -194,23 +194,19 @@ def picking(net, stn, chn, st, twin, stride, model):
     net, stn, chn : str
         대상 네트워크/관측소/채널 prefix.
     st : obspy.Stream
-        원본 스트림.
+        원본 Stream.
     twin : int
-        윈도우 길이(샘플).
+        Window 길이(샘플).
     stride : int
-        윈도우 이동량(샘플).
+        Window 사이 shift(샘플).
     model : callable
         X(batch, twin, 3) -> Y(batch, twin, 3)의 예측 함수를 가진 모델
-        (예: Keras 모델 또는 동등한 인터페이스).
 
     Returns
     -------
     data : np.ndarray
-        (npts, 3) 원 파형(전처리/정렬 후).
     Y_med : np.ndarray
-        (total_samples, 3) 최종 클래스 확률(P, S, Noise).
     startT : obspy.UTCDateTime
-        data 시작 시각.
     """
     data, startT = getArray(st.copy(), stn, chn, net)
     data2, meta = getSegment(data, startT, stn, chn, net, twin=twin, tshift=stride)
@@ -245,7 +241,7 @@ def plot_results(net, stn, chn, data_total, Y_total):
     net, stn, chn : str
         네트워크/관측소/채널 prefix.
     data_total : np.ndarray
-        shape (npts, 3). 열 순서를 E/N/Z로 가정해 plotting(주의).
+        shape (npts, 3). 열 순서를 E/N/Z로 가정해 plotting.
     Y_total : np.ndarray
         shape (npts, 3). 열 순서 [P, S, Noise] 확률.
     """
@@ -326,11 +322,11 @@ def batch_picking(
     model : Any
         KFpicker 등 예측에 사용할 모델 객체.
     twin : int, default 3000
-        윈도 길이(샘플 수).
+        Window 길이(샘플).
     stride : int, default 3000
-        슬라이딩 간격(샘플 수).
+        Window 간격(샘플).
     plot : bool, default True
-        True이면 각 SCNL별 결과 플롯 생성.
+        True이면 각 SCNL별 결과 plot 생성.
     verbose : bool, default False
         True이면 진행 상황 출력.
 
@@ -947,21 +943,20 @@ def make_folium_hypo_map(
 
 def build_relative_dataset(picks_total, station_xlsx, origin_time):
     """
-    픽 테이블과 관측소 메타를 병합·피벗한 뒤,
-    원시여진 시각(origin_time) 기준 주행시간을 계산하고
+    피크 테이블과 관측소 메타데이터를 병합한 뒤, origin_time 기준 주행시간을 계산하고
     상대 위치/거리 테이블을 생성합니다.
 
     Parameters
     ----------
     picks_total : pandas.DataFrame
-        ['Network','Station','Channel','arr','prob','phase'] 컬럼을 포함한 픽 테이블.
+        ['Network','Station','Channel','arr','prob','phase'] column을 포함한 피크 테이블.
         - 'phase'는 'P' 또는 'S'
         - 'arr'은 도달시각(파싱 가능한 datetime/UTCDateTime/문자열)
     station_xlsx : str
-        관측소 메타 엑셀 파일 경로.
+        관측소 메타데이터 엑셀 파일 경로.
         필요한 컬럼: ['Network','Station','Stlat','Stlon','elevation'].
     origin_time : obspy.UTCDateTime
-        원시여진(이벤트) 기준 시각.
+        진원시.
 
     Returns
     -------
