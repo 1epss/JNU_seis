@@ -401,6 +401,63 @@ def load_data(pkl_path):
     return data
 
 
+def read_data(data, network='KS', station=None, channel=None):
+    """
+    DataFrame에서 네트워크, 관측소, 채널 조건에 맞는 Stream 객체를 반환합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        입력 DataFrame. 최소한 다음 열을 포함해야 합니다:
+        - 'network' : 네트워크 코드
+        - 'station' : 관측소 코드
+        - 'channel' : 채널 코드
+        - 'stream'  : ObsPy Stream 또는 Trace 객체
+    network : str or list[str] or None, default='KS'
+        필터링할 네트워크 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
+        None이면 필터링하지 않음.
+    station : str or list[str] or None, default=None
+        필터링할 관측소 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
+        None이면 필터링하지 않음.
+    channel : str or list[str] or None, default=None
+        필터링할 채널 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
+        None이면 필터링하지 않음.
+
+    Returns
+    -------
+    streams : list of obspy.Stream
+        조건에 맞는 Stream 객체들의 리스트. 조건과 일치하는 데이터가 없으면
+        ValueError가 발생합니다.
+
+    Raises
+    ------
+    ValueError
+        조건에 맞는 데이터가 없을 경우 발생.
+    """
+    if network is not None:
+        if isinstance(network, (list, tuple, set)):
+            data = data[data['network'].isin(network)]
+        else:
+            data = data[data['network'] == network]
+
+    if station is not None:
+        if isinstance(station, (list, tuple, set)):
+            data = data[data['station'].isin(station)]
+        else:
+            data = data[data['station'] == station]
+
+    if channel is not None:
+        if isinstance(channel, (list, tuple, set)):
+            data = data[data['channel'].isin(channel)]
+        else:
+            data = data[data['channel'] == channel]
+
+    if data.empty:
+        raise ValueError("조건에 맞는 데이터가 없습니다.")
+
+    return data['stream'].tolist()
+
+
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
     """
     위경도 좌표(도)를 기준점 대비 남북/동서 거리(km)로 변환합니다.
