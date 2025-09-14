@@ -916,6 +916,12 @@ def plot_map(
             tooltip="Hypocenter",
         ).add_to(m)
 
+        depth = result_df["Z"].iloc[-1] if "Z" in result_df.columns else None
+        if depth is not None:
+            print(f"지진 발생 위치 → 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.1f} km")
+        else:
+            print(f"지진 발생 위치 → 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}")
+        
     # 반경 원/라벨(옵션)
     if show_rings:
         for rk in rings_km:
@@ -945,8 +951,7 @@ def plot_map(
                        force_separate_button=True).add_to(m)
 
     m.save(html_out)
-    # 통일된 반환: (지도, 진원좌표 또는 None)
-    return m, (hypo_lat, hypo_lon)
+    return m
 
 
 def build_relative_dataset(picks_total: pd.DataFrame,
