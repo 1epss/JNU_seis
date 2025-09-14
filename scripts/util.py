@@ -1,11 +1,14 @@
+from __future__ import annotations
+from typing import Iterable
 import folium
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pickle
+import re
 from folium import plugins
 from folium.features import DivIcon
-from obspy import UTCDateTime
+from obspy import UTCDateTime, Stream, Trace
 from scipy.sparse.linalg import cg
 
 
@@ -401,61 +404,43 @@ def load_data(pkl_path):
     return data
 
 
-def read_data(data, network='KS', station=None, channel=None):
-    """
-    DataFrame에서 네트워크, 관측소, 채널 조건에 맞는 Stream 객체를 반환합니다.
+def _filter_with_pattern(series: pd.Series, pattern) -> pd.Series:
+    """단일 문자열 또는 리스트/셋 패턴을 지원."""
+    if pattern is None:
+        return pd.Series([True] * len(series), index=series.index)
 
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        입력 DataFrame. 최소한 다음 열을 포함해야 합니다:
-        - 'network' : 네트워크 코드
-        - 'station' : 관측소 코드
-        - 'channel' : 채널 코드
-        - 'stream'  : ObsPy Stream 또는 Trace 객체
-    network : str or list[str] or None, default='KS'
-        필터링할 네트워크 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
-        None이면 필터링하지 않음.
-    station : str or list[str] or None, default=None
-        필터링할 관측소 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
-        None이면 필터링하지 않음.
-    channel : str or list[str] or None, default=None
-        필터링할 채널 코드. 단일 문자열 또는 문자열 리스트/튜플/셋.
-        None이면 필터링하지 않음.
+    if isinstance(pattern, (list, tuple, set)):
+        regex = "|".join([p.replace("*", ".*") for p in pattern])
+    else:
+        regex = pattern.replace("*", ".*")
 
-    Returns
-    -------
-    streams : list of obspy.Stream
-        조건에 맞는 Stream 객체들의 리스트. 조건과 일치하는 데이터가 없으면
-        ValueError가 발생합니다.
+    return series.astype(str).str.match(f"^{regex}$")
 
-    Raises
-    ------
-    ValueError
-        조건에 맞는 데이터가 없을 경우 발생.
-    """
+def read_data(data, network=None, station=None, channel=None, copy=True) -> Stream:
     if network is not None:
-        if isinstance(network, (list, tuple, set)):
-            data = data[data['network'].isin(network)]
-        else:
-            data = data[data['network'] == network]
-
+        data = data[_filter_with_pattern(data["network"], network)]
     if station is not None:
-        if isinstance(station, (list, tuple, set)):
-            data = data[data['station'].isin(station)]
-        else:
-            data = data[data['station'] == station]
-
+        data = data[_filter_with_pattern(data["station"], station)]
     if channel is not None:
-        if isinstance(channel, (list, tuple, set)):
-            data = data[data['channel'].isin(channel)]
-        else:
-            data = data[data['channel'] == channel]
+        data = data[_filter_with_pattern(data["channel"], channel)]
 
     if data.empty:
         raise ValueError("조건에 맞는 데이터가 없습니다.")
 
-    return data['stream'].tolist()
+    out = Stream()
+    for _, row in data.iterrows():
+        obj = row["stream"]
+        if isinstance(obj, Stream):
+            out += obj.copy() if copy else obj
+        elif isinstance(obj, Trace):
+            out.append(obj.copy() if copy else obj)
+        else:
+            raise TypeError(f"'stream' 값이 ObsPy Stream/Trace가 아님: {type(obj)}")
+
+    if len(out) == 0:
+        raise ValueError("조건에는 맞지만 유효한 Trace가 없습니다.")
+
+    return out
 
 
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
@@ -844,228 +829,216 @@ def total_run(iteration, mp, vp, vs, data):
     return result_df
 
 
-def make_folium_hypo_map(
-    data,
-    result_df,
+def plot_map(
+    data: pd.DataFrame,
+    result_df: pd.DataFrame | None = None,
+    *,
     center=None,
-    html_out="test.html",
-    zoom_start=16,
-    rings_km=(30, 50, 100),
+    html_out="map.html",
+    zoom_start=8,
+    # 표시 토글
+    show_station_labels=True,
+    show_hypocenter=False,
+    show_rings=False,
+    show_ring_labels=False,
     use_auto_label=True,
+    rings_km=(30, 50, 100),
 ):
     """
-    Folium으로 관측소/진원 시각화를 수행하고 HTML 파일로 저장합니다.
+    Folium 지도에 관측소(기본)와 선택적으로 진원/반경을 표시하고 저장.
 
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        Station, Network, Stlat, Stlon 컬럼 포함
-    result_df : pandas.DataFrame
-        역산 결과. 마지막 행의 ['X','Y']를 사용
-        (주의: 이 코드에서는 X=Easting_km, Y=Northing_km 로 가정하여
-         north_km=Y, east_km=X 순으로 calc_hypocenter_coords에 전달)
-    center : (lat, lon) | None
-        지도 중심점. None이면 관측소 중앙값 사용
-    html_out : str
-        저장할 HTML 파일명
-    zoom_start : int
-        초기 줌 레벨
-    rings_km : tuple[int]
-        반경 원 (km) 리스트
-    use_auto_label : bool
-        True면 반경 라벨 위치를 km→deg로 자동 환산해 표시
-        False면 질문에서 제공한 고정 오프셋(0.21, 0.35, 0.7)을 사용
-
-    Returns
-    -------
-    m : folium.Map
-        folium 지도 객체
-    (hypo_lat, hypo_lon) : tuple[float, float]
-        최종 진원 위경도
-    html_out : str
-        저장된 파일 경로
+    data 컬럼 대소문자 혼합 허용: (station/Station, stla/Stlat, stlo/Stlon, network/Network).
+    result_df는 show_hypocenter=True일 때만 사용하며 마지막 행의 ['X','Y'](km)를 이용.
     """
-    # 중심점
+    # --- 컬럼 키 유틸 ---
+    def k(*names):  # 우선순위대로 첫 존재 키 반환
+        for n in names:
+            if n in data.columns:
+                return n
+        return None
+
+    # 필수 좌표 키
+    stla_k = k("stla", "Stlat")
+    stlo_k = k("stlo", "Stlon")
+    sta_k  = k("station", "Station")
+    net_k  = k("network", "Network")
+
+    if not all([stla_k, stlo_k, sta_k, net_k]):
+        missing = [name for name in ["stla/Stlat", "stlo/Stlon", "station/Station", "network/Network"]
+                   if (k(*name.split("/")) is None)]
+        raise ValueError(f"필수 컬럼 누락: {missing}")
+
+    # 중심점 결정
     if center is None:
-        center = [float(np.median(data.Stlat)), float(np.median(data.Stlon))]
+        center = (float(np.median(data[stla_k])), float(np.median(data[stlo_k])))
+    else:
+        center = (float(center[0]), float(center[1]))
 
-    # 최종 진원
-    east_km = float(result_df.iloc[-1]["X"])
-    north_km = float(result_df.iloc[-1]["Y"])
-    hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
-
-    # 지도 생성 (Esri World Imagery)
+    # 타일(Esri)
     m = folium.Map(
-        width=900,
-        height=900,
-        location=center,
-        zoom_start=zoom_start,
-        control_scale=True,
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr=(
-            "Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, "
-            "Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
-        ),
+        width=900, height=900, location=center, zoom_start=zoom_start, control_scale=True,
+        tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"),
+        attr=("Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, "
+              "Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"),
         name="Esri World Imagery",
     )
 
-    # 진원 마커 (빨간 별)
-    folium.Marker(
-        location=[hypo_lat, hypo_lon],
-        icon=folium.Icon(color="red", icon="star", prefix="fa"),
-        tooltip="Hypocenter",
-    ).add_to(m)
-
-    # 관측소 마커 + 라벨
+    # 관측소 마커 + (선택) 라벨
     for _, row in data.iterrows():
-        lat, lon = float(row.Stlat), float(row.Stlon)
-        tip = (
-            f"station:{row.Station}<br/>Network:{row.Network}"
-            f"<br/>Location:{lat:.4f},{lon:.4f}"
-        )
+        lat, lon = float(row[stla_k]), float(row[stlo_k])
+        tip = f"station:{row[sta_k]}<br/>Network:{row[net_k]}<br/>Location:{lat:.4f}, {lon:.4f}"
         folium.features.RegularPolygonMarker(
-            location=(lat, lon),
-            tooltip=tip,
-            color="yellow",
-            fill_color="green",
-            number_of_sides=6,
-            rotation=30,
-            radius=5,
-            fill_opacity=1,
+            location=(lat, lon), tooltip=tip, color="yellow", fill_color="green",
+            number_of_sides=6, rotation=30, radius=5, fill_opacity=1,
         ).add_to(m)
-
-        folium.map.Marker(
-            (lat, lon),
-            icon=DivIcon(
-                icon_size=(0, 0),
-                icon_anchor=(0, -20),
-                html=f'<div style="font-size: 8pt; color: {"white"}">{row.Station}</div>',
-            ),
-        ).add_to(m)
-
-    # 반경 원
-    for rk in rings_km:
-        folium.Circle(
-            location=center, color="black", fill_opacity=0, radius=rk * 1000.0
-        ).add_to(m)
-
-    # 반경 라벨 (자동 환산 or 고정 오프셋)
-    if use_auto_label:
-        lat0 = center[0]
-        for rk in rings_km:
-            dlat = rk / 111.0
-            dlon = rk / (111.0 * np.cos(np.radians(lat0)) + 1e-12)
-            text = (
-                f"<div style='background-color: white; padding: 5px; "
-                f"border: 1px solid black; border-radius: 1px; "
-                f"display: inline-block; width: {60 if rk>=100 else 50}px;'>"
-                f"<b>{rk} km </b></div>"
-            )
-            folium.Marker(
-                location=(center[0] + dlat * 0.9, center[1] + dlon * 0.9),
-                icon=DivIcon(
-                    html=f"<div style='font-size: 10pt; font-weight: bold;'>{text}</div>"
-                ),
+        if show_station_labels:
+            folium.Marker((lat, lon),
+                icon=DivIcon(icon_size=(0, 0), icon_anchor=(0, -20),
+                             html=f'<div style="font-size: 8pt; color: white;">{row[sta_k]}</div>')
             ).add_to(m)
-    else:
-        # 질문의 고정 오프셋(대략 NE 방향)
-        fixed = {30: (0.21, 0.20), 50: (0.35, 0.35), 100: (0.70, 0.70)}
+
+    hypo = None
+
+    # 진원 마커(옵션)
+    if show_hypocenter:
+        if result_df is None:
+            raise ValueError("show_hypocenter=True 이면 result_df가 필요합니다.")
+        east_km = float(result_df.iloc[-1]["X"])
+        north_km = float(result_df.iloc[-1]["Y"])
+
+        # 외부 함수: X=east_km, Y=north_km -> (lat, lon)
+        hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
+        hypo = (hypo_lat, hypo_lon)
+
+        folium.Marker(
+            location=[hypo_lat, hypo_lon],
+            icon=folium.Icon(color="red", icon="star", prefix="fa"),
+            tooltip="Hypocenter",
+        ).add_to(m)
+
+    # 반경 원/라벨(옵션)
+    if show_rings:
         for rk in rings_km:
-            dlat, dlon = fixed.get(rk, (0.21, 0.20))
-            width = 60 if rk >= 100 else 50
-            text = (
-                f"<div style='background-color: white; padding: 5px; "
-                f"border: 1px solid black; border-radius: 1px; display: inline-block; "
-                f"width: {width}px;'><b>{rk} km </b></div>"
-            )
-            folium.Marker(
-                location=(center[0] + dlat, center[1] + dlon),
-                icon=DivIcon(
-                    html=f"<div style='font-size: 10pt; font-weight: bold;'>{text}</div>"
-                ),
-            ).add_to(m)
+            folium.Circle(location=center, color="black", fill_opacity=0, radius=rk * 1000.0).add_to(m)
+
+        if show_ring_labels:
+            lat0 = center[0]
+            for rk in rings_km:
+                if use_auto_label:
+                    dlat = rk / 111.0
+                    dlon = rk / (111.0 * np.cos(np.radians(lat0)) + 1e-12)
+                    dy, dx = dlat * 0.9, dlon * 0.9
+                else:
+                    fixed = {30: (0.21, 0.20), 50: (0.35, 0.35), 100: (0.70, 0.70)}
+                    dy, dx = fixed.get(rk, (0.21, 0.20))
+                width = 60 if rk >= 100 else 50
+                text = (f"<div style='background-color: white; padding: 5px; "
+                        f"border: 1px solid black; border-radius: 1px; display: inline-block; "
+                        f"width: {width}px;'><b>{rk} km</b></div>")
+                folium.Marker(
+                    location=(center[0] + dy, center[1] + dx),
+                    icon=DivIcon(html=f"<div style='font-size: 10pt; font-weight: bold;'>{text}</div>"),
+                ).add_to(m)
 
     # 전체 화면 버튼
-    plugins.Fullscreen(
-        position="topright",
-        title="Expand me",
-        title_cancel="Exit me",
-        force_separate_button=True,
-    ).add_to(m)
+    plugins.Fullscreen(position="topright", title="Expand", title_cancel="Exit",
+                       force_separate_button=True).add_to(m)
 
-    # 저장 및 리턴
     m.save(html_out)
-    return m, (hypo_lat, hypo_lon), html_out
+    # 통일된 반환: (지도, 진원좌표 또는 None, 저장경로)
+    return m, hypo, html_out
 
 
-def build_relative_dataset(picks_total, station_xlsx, origin_time):
+def build_relative_dataset(picks_total: pd.DataFrame,
+                           data: pd.DataFrame,
+                           origin_time: UTCDateTime | None = None):
     """
-    피크 테이블과 관측소 메타데이터를 병합한 뒤, origin_time 기준 주행시간을 계산하고
-    상대 위치/거리 테이블을 생성합니다.
+    피크 테이블(picks_total)과 관측소 메타(data)를 병합하고, origin_time 기준 주행시간과
+    상대 위치/거리 테이블을 생성.
 
     Parameters
     ----------
     picks_total : pandas.DataFrame
-        ['Network','Station','Channel','arr','prob','phase'] column을 포함한 피크 테이블.
-        - 'phase'는 'P' 또는 'S'
-        - 'arr'은 도달시각(파싱 가능한 datetime/UTCDateTime/문자열)
-    station_xlsx : str
-        관측소 메타데이터 엑셀 파일 경로.
-        필요한 컬럼: ['Network','Station','Stlat','Stlon','elevation'].
-    origin_time : obspy.UTCDateTime
-        진원시.
+        ['Network','Station','Channel','arr','prob','phase'] 포함. phase ∈ {'P','S'}.
+    data : pandas.DataFrame
+        ['network','station','channel','stla','stlo','stelev','origintime','stream'] 포함.
+    origin_time : obspy.UTCDateTime | None, default=None
+        진원시. None이면 data['origintime']가 단일값일 때 그 값을 사용.
 
     Returns
     -------
     data_rel : pandas.DataFrame
         calc_relative_distance() 결과 테이블.
-    x_list : list
-        상대 동서 거리 리스트(km).
-    y_list : list
-        상대 남북 거리 리스트(km).
-
-    Notes
-    -----
-    - 피벗 후 컬럼은 'P_arr', 'S_arr', 'P_prob', 'S_prob' 형태로 생성됩니다.
-    - 'P_trv', 'S_trv'는 origin_time 대비 주행시간(초)로 계산됩니다.
-    - 최종 data에는 표시용으로 'P_arr','S_arr' 별칭을 'P_trv','S_trv'로 덮어씁니다.
+    x_list : list[float]
+        상대 동서 거리(km).
+    y_list : list[float]
+        상대 남북 거리(km).
     """
-    # 1) 관측소 메타 읽기 + 병합
-    df_xlsx = pd.read_excel(station_xlsx)
-    merged_df = picks_total.merge(
-        df_xlsx[["Network", "Station", "Stlat", "Stlon", "elevation"]],
-        on=["Network", "Station"],
-        how="left",
-    )
+    # --- 컬럼 소문자 정규화 ---
+    pkt = picks_total.copy()
+    pkt.columns = [c.lower() for c in pkt.columns]
+    dfm = data.copy()
+    dfm.columns = [c.lower() for c in dfm.columns]
 
-    # 2) phase별 첫 픽으로 피벗 (arr, prob)
+    # 필수 컬럼 체크
+    need_picks = {'network','station','channel','arr','prob','phase'}
+    need_meta  = {'network','station','channel','stla','stlo','stelev','origintime'}
+    miss1 = need_picks - set(pkt.columns)
+    miss2 = need_meta  - set(dfm.columns)
+    if miss1:
+        raise ValueError(f"picks_total 필수 컬럼 누락: {sorted(miss1)}")
+    if miss2:
+        raise ValueError(f"data 필수 컬럼 누락: {sorted(miss2)}")
+
+    # --- origin_time 결정 ---
+    if origin_time is None:
+        uniq = dfm['origintime'].dropna().unique()
+        if len(uniq) != 1:
+            raise ValueError("origin_time을 인자로 주거나, data['origintime']가 단일값이어야 함")
+        origin_time = UTCDateTime(uniq[0])
+    else:
+        origin_time = UTCDateTime(origin_time)
+
+    # --- 메타 선택(좌표/표고만) ---
+    meta = dfm[['network','station','channel','stla','stlo','stelev']].drop_duplicates()
+
+    # --- 피벗: 각 관측소/채널에 대해 P,S의 첫 도달/확률 ---
+    merged_df = pkt.merge(meta, on=['network','station','channel'], how='left')
+
     pivot_df = merged_df.pivot_table(
-        index=["Network", "Station", "Channel", "Stlat", "Stlon", "elevation"],
-        columns="phase",
-        values=["arr", "prob"],
-        aggfunc="first",
+        index=['network','station','channel','stla','stlo','stelev'],
+        columns='phase',
+        values=['arr','prob'],
+        aggfunc='first'
     )
-    # → 'P_arr', 'S_arr', 'P_prob', 'S_prob' 형태의 단일 컬럼으로 변환
+    # 컬럼 이름을 'P_arr','S_arr','P_prob','S_prob' 형태로
     pivot_df.columns = [f"{ph}_{col}" for col, ph in pivot_df.columns]
     pivot_df = pivot_df.reset_index()
 
-    # 3) origin_time 기준 주행시간 계산
-    data = pivot_df.copy()
-    if "P_arr" in data.columns:
-        data["P_trv"] = data["P_arr"].apply(
-            lambda x: UTCDateTime(x) - origin_time if pd.notna(x) else None
-        )
-    if "S_arr" in data.columns:
-        data["S_trv"] = data["S_arr"].apply(
-            lambda x: UTCDateTime(x) - origin_time if pd.notna(x) else None
-        )
+    # --- 주행시간 계산 ---
+    data_out = pivot_df.copy()
 
-    # 표시·호환용: P_arr/S_arr에 주행시간 별칭 덮어쓰기
-    data["P_arr"] = data.get("P_trv", None)
-    data["S_arr"] = data.get("S_trv", None)
+    def _to_tt(x):
+        if pd.isna(x):
+            return None
+        return UTCDateTime(x) - origin_time
 
-    # 4) 상대 위치/거리 계산 (사용자 정의 함수)
-    data_rel, x_list, y_list = calc_relative_distance(data)
+    if 'P_arr' in data_out.columns:
+        data_out['P_trv'] = data_out['P_arr'].apply(_to_tt)
+    if 'S_arr' in data_out.columns:
+        data_out['S_trv'] = data_out['S_arr'].apply(_to_tt)
+
+    # 표시·호환용 별칭 유지
+    data_out['P_arr'] = data_out.get('P_trv', None)
+    data_out['S_arr'] = data_out.get('S_trv', None)
+
+    # --- calc_relative_distance가 대문자 키를 기대한다면 매핑 ---
+    data_out['Stlat'] = data_out['stla']
+    data_out['Stlon'] = data_out['stlo']
+    data_out['elevation'] = data_out['stelev']
+
+    # --- 상대 위치/거리 계산 (사용자 정의 함수) ---
+    data_rel, x_list, y_list = calc_relative_distance(data_out)
     return data_rel, x_list, y_list
 
 
