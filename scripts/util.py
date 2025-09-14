@@ -945,8 +945,8 @@ def plot_map(
                        force_separate_button=True).add_to(m)
 
     m.save(html_out)
-    # 통일된 반환: (지도, 진원좌표 또는 None, 저장경로)
-    return m, hypo, html_out
+    # 통일된 반환: (지도, 진원좌표 또는 None)
+    return m, (hypo_lat, hypo_lon)
 
 
 def build_relative_dataset(picks_total: pd.DataFrame,
