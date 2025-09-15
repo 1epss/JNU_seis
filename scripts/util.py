@@ -1,11 +1,10 @@
 from __future__ import annotations
-from typing import Iterable
+
 import folium
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pickle
-import re
 from folium import plugins
 from folium.features import DivIcon
 from obspy import UTCDateTime, Stream, Trace
@@ -14,11 +13,13 @@ from scipy.sparse.linalg import cg
 
 # ====== Module metadata ======
 __title__ = "util"
-__version__ = "0.1.1"
-__author__ = "Yoontaek Hong, Mingyu Doo"
+__version__ = "0.1.2"
+__author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
 
+
+## ====== 
 def get_scnl(st):
     """
     ObsPy Stream에서 (network, station, channel-2글자 prefix) 조합을 추출해
@@ -787,12 +788,14 @@ def get_dm(G, res):
     return dm
 
 
-def total_run(iteration, mp, vp, vs, data):
+def calc_hypocenter(data, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
     """
     선형화 역산을 수행하여 진원의 위치와 진원시를 추정합니다.
 
     Parameters
     ----------
+    data : DataFrame
+        관측소 정보 및 실제 도달시각을 포함한 DataFrame
     iteration : int
         최대 반복 횟수
     mp : ndarray
@@ -801,8 +804,6 @@ def total_run(iteration, mp, vp, vs, data):
         P파 속도 (km/s)
     vs : float
         S파 속도 (km/s)
-    data : DataFrame
-        관측소 정보 및 실제 도달시각을 포함한 DataFrame
 
     Returns
     -------
@@ -832,7 +833,6 @@ def total_run(iteration, mp, vp, vs, data):
 def plot_map(
     data: pd.DataFrame,
     result_df: pd.DataFrame | None = None,
-    *,
     center=None,
     html_out="map.html",
     zoom_start=8,
@@ -916,11 +916,9 @@ def plot_map(
             tooltip="Hypocenter",
         ).add_to(m)
 
-        depth = result_df["Z"].iloc[-1] if "Z" in result_df.columns else None
-        if depth is not None:
-            print(f"지진 발생 위치 → 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.1f} km")
-        else:
-            print(f"지진 발생 위치 → 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}")
+        depth = result_df["Z"].iloc[-1]
+        rms = result_df["RMS"].iloc[-1]
+        print(f"총 {len(result_df)}번 역산 결과, 지진이 발생한 지점은 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.5f} km 입니다. (RMS : {rms})")
         
     # 반경 원/라벨(옵션)
     if show_rings:
