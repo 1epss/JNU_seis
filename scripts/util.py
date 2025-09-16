@@ -2,24 +2,196 @@ from __future__ import annotations
 
 import folium
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
 import pickle
+import time
 from folium import plugins
 from folium.features import DivIcon
 from obspy import UTCDateTime, Stream, Trace
 from scipy.sparse.linalg import cg
+from pathlib import Path
 
 
 # ====== Module metadata ======
 __title__ = "util"
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
 
+def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
+    """
+    관측소 정보(SCN), 위경도 좌표, 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
 
-## ====== 
+    Parameters
+    ----------
+    pkl_path : str or pathlib.Path
+        입력 pickle 파일 경로. 파일에는 최소한 다음 열이 포함되어야 함:
+        network, station, channel, latitude, longitude, elevation, starttime, endtime, data
+    verbose : bool, default=True
+        True일 경우, 불러온 데이터의 정보를 출력합니다. False이면 DataFrame만 반환합니다.
+
+    Returns
+    -------
+    data : pandas.DataFrame
+        불러온 관측소 & 지진파형 데이터
+    """
+    with open(pkl_path, "rb") as f:
+        data: pd.DataFrame = pickle.load(f)
+
+    if verbose:
+        print("데이터를 불러옵니다...")
+        print("=" * 80)
+        for _, row in data.iterrows():
+            print("관측소: {net:<2}.{sta:<5} | 채널: {cha:<3} | 기간(UTC): {start} ~ {end}".format(
+                net=row["network"],
+                sta=row["station"],
+                cha=row["channel"],
+                start=row["starttime"].strftime("%Y-%m-%d %H:%M:%S"),
+                end=row["endtime"].strftime("%Y-%m-%d %H:%M:%S")))
+            time.sleep(0.1)
+        print("=" * 80)
+        print(f"총 {len(data)}개의 데이터를 불러왔습니다.")
+
+    return data
+
+
+def plot_data(data: pd.DataFrame, network: str, station: str, channel: str) -> None:
+    """
+    입력받은 관측소의 3성분 파형을 시각화합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        지진파 데이터가 담긴 DataFrame. 
+        'network', 'station', 'channel', 'data' 열을 포함해야 합니다.
+    network : str
+        네트워크명.
+    station : str
+        관측소명.
+    channel : str
+        채널명 접두사 (예: 'HG', 'HH').
+    """
+    # 조건에 맞는 데이터를 필터링합니다.
+    filtered_data = data[
+        (data['network'] == network) &
+        (data['station'] == station) &
+        (data['channel'].str.startswith(channel, na=False))
+    ]
+
+    if filtered_data.empty:
+        print(f"해당 조건의 데이터가 없습니다. (네트워크: {network}, 관측소: {station}, 채널: {channel})")
+        return
+
+    row = filtered_data.iloc[0]
+    stream = row['data']
+
+    fig = plt.figure(figsize=(7, 5))
+
+    for i, trace in enumerate(stream):
+        ax = fig.add_subplot(len(stream), 1, i + 1)
+
+        # 각 trace의 실제 시작시각 기준으로 X축 용 시간 벡터 생성
+        n = trace.stats.npts
+        dt = trace.stats.delta
+        t0 = trace.stats.starttime
+        time_vector = [(t0 + j * dt).datetime for j in range(n)]
+
+        ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
+        ax.set_ylabel("count")
+        ax.legend(loc='upper right')
+
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+        
+        if i < len(stream) - 1:
+            ax.set_xticks([])
+        else:
+            ax.set_xlabel("Time (UTC)")
+
+    plt.suptitle(f"{network}.{station}..{channel}")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html", zoom_start: int = 10, show_station_labels: bool = True) -> folium.Map:
+    """
+    관측소 정보를 Folium 지도에 표시 및 HTML 파일로 저장합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        관측소 정보를 포함한 DataFrame. 다음 열이 포함되어야 합니다.
+        network, station, latitude, longitude
+    center : tuple of float, optional
+        지도 중심 좌표 (위도, 경도). 지정하지 않으면 관측소들의 위도/경도 중앙값으로 설정됩니다.
+    html_out : str, default="map.html"
+        저장할 HTML 파일 이름.
+    zoom_start : int, default=10
+        지도 초기 Zoom level.
+    show_station_labels : bool, default=True
+        True이면 관측소 마커 옆에 관측소명을 텍스트 라벨로 표시합니다.
+    """
+    # 지도 중심 좌표 결정
+    if center is None:
+        lat_med = float(np.median(data["latitude"].dropna()))
+        lon_med = float(np.median(data["longitude"].dropna()))
+        center = (lat_med, lon_med)
+    else:
+        center = (float(center[0]), float(center[1]))
+
+    # Folium 지도 객체 (m) 생성
+    m = folium.Map(
+        width=900, height=900, location=center, zoom_start=zoom_start, control_scale=True,
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr=("Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, "
+              "Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"),
+        name="Esri World Imagery",
+    )
+
+    # 관측소 마커 및 라벨 설정
+    for _, row in data.iterrows():
+        lat, lon = float(row["latitude"]), float(row["longitude"])
+        tip = (
+            f"Station: {row['station']}<br/>"
+            f"Network: {row['network']}<br/>"
+            f"Location: {lat:.4f}, {lon:.4f}"
+        )
+        folium.features.RegularPolygonMarker(
+            location=(lat, lon),
+            tooltip=tip,
+            color="yellow",
+            fill_color="green",
+            number_of_sides=6,
+            rotation=30,
+            radius=5,
+            fill_opacity=1,
+        ).add_to(m)
+
+        if show_station_labels:
+            folium.Marker(
+                (lat, lon),
+                icon=DivIcon(
+                    icon_size=(0, 0),
+                    icon_anchor=(0, -20),
+                    html=f"<div style='font-size: 8pt; color: white;'>{row['station']}</div>",
+                ),
+            ).add_to(m)
+
+    # 전체 화면 버튼
+    plugins.Fullscreen(
+        position="topright",
+        title="Expand",
+        title_cancel="Exit",
+        force_separate_button=True
+    ).add_to(m)
+
+    m.save(html_out)
+    display(m)
+
+
+## ====== picking ====== 
 def get_scnl(st):
     """
     ObsPy Stream에서 (network, station, channel-2글자 prefix) 조합을 추출해
@@ -45,9 +217,9 @@ def get_scnl(st):
     return scnl_df
 
 
-def normalize(data, axis=(1,)):
+def normalize(data: np.ndarray, axis=(1,)) -> np.ndarray:
     """
-    data를 주어진 축(axis)에 대해 평균 0, 표준편차 1로 정규화합니다.
+    data를 주어진 축에 대해 평균 0, 표준편차 1로 정규화합니다.
 
     Notes
     -----
@@ -385,65 +557,7 @@ def batch_picking(
     return picks_total
 
 
-def load_data(pkl_path):
-    """
-    관측소 정보(SCN), 위경도 좌표, 주행시간이 담긴 pickle(DataFrame) 파일을 불러옵니다.
-
-    Parameters
-    ----------
-    pkl_path : str or pathlib.Path
-        입력 pickle 파일 경로. 파일에는 최소한 다음 열이 포함되어야 함:
-        Station, Network, Channel, Stlat, Stlon, P_trv, S_trv
-
-    Returns
-    -------
-    data : pandas.DataFrame
-        관측소 메타데이터와 관측 주행시간이 포함된 DataFrame
-    """
-    with open(pkl_path, "rb") as f:
-        data = pickle.load(f)
-    return data
-
-
-def _filter_with_pattern(series: pd.Series, pattern) -> pd.Series:
-    """단일 문자열 또는 리스트/셋 패턴을 지원."""
-    if pattern is None:
-        return pd.Series([True] * len(series), index=series.index)
-
-    if isinstance(pattern, (list, tuple, set)):
-        regex = "|".join([p.replace("*", ".*") for p in pattern])
-    else:
-        regex = pattern.replace("*", ".*")
-
-    return series.astype(str).str.match(f"^{regex}$")
-
-def read_data(data, network=None, station=None, channel=None, copy=True) -> Stream:
-    if network is not None:
-        data = data[_filter_with_pattern(data["network"], network)]
-    if station is not None:
-        data = data[_filter_with_pattern(data["station"], station)]
-    if channel is not None:
-        data = data[_filter_with_pattern(data["channel"], channel)]
-
-    if data.empty:
-        raise ValueError("조건에 맞는 데이터가 없습니다.")
-
-    out = Stream()
-    for _, row in data.iterrows():
-        obj = row["stream"]
-        if isinstance(obj, Stream):
-            out += obj.copy() if copy else obj
-        elif isinstance(obj, Trace):
-            out.append(obj.copy() if copy else obj)
-        else:
-            raise TypeError(f"'stream' 값이 ObsPy Stream/Trace가 아님: {type(obj)}")
-
-    if len(out) == 0:
-        raise ValueError("조건에는 맞지만 유효한 Trace가 없습니다.")
-
-    return out
-
-
+## ====== Calculate hypocenter and origin time ====== 
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
     """
     위경도 좌표(도)를 기준점 대비 남북/동서 거리(km)로 변환합니다.
