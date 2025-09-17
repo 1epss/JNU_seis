@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import time
+import tensorflow as tf
 from folium import plugins
 from folium.features import DivIcon
 from numpy.typing import NDArray
@@ -735,10 +736,6 @@ def _calc_origintime(picks_total, vp, vs):
 
         mean_origin = UTCDateTime(mean_ts)
     return mean_origin
-
-vp = np.mean([5.63, 6.17])
-vs = np.mean([3.39, 3.61])
-origin_time = _calc_origintime(picks_total, vp, vs)
 
 
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
