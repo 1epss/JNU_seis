@@ -8,6 +8,7 @@ import pandas as pd
 import pickle
 import time
 import tensorflow as tf
+from datetime import datetime, timezone
 from folium import plugins
 from folium.features import DivIcon
 from numpy.typing import NDArray
@@ -847,100 +848,6 @@ def build_relative_dataset(
     return data_rel
 
 
-def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
-    """
-    기준점으로부터의 남북/동서 거리(km)를 위경도 좌표(도)로 변환합니다.
-
-    Notes
-    -----
-    - 입력은 (y_km, x_km) 순서입니다.
-      y_km = 북쪽(+) / 남쪽(−) 거리 [km]
-      x_km = 동쪽(+) / 서쪽(−) 거리 [km]
-    - 경도(동서) 환산 시 결과 위도(lat)에 대해 cos 보정을 적용합니다.
-
-    Parameters
-    ----------
-    standard_lat : float
-        기준점 위도(도)
-    standard_lon : float
-        기준점 경도(도)
-    y_km : float
-        기준점 대비 남북 거리(km) (+북/−남)
-    x_km : float
-        기준점 대비 동서 거리(km) (+동/−서)
-
-    Returns
-    -------
-    lat : float
-        변환된 위도(도)
-    lon : float
-        변환된 경도(도)
-    """
-    dlat = y_km / 111.32
-    y = dlat + standard_lat
-    dlon = x_km / (111.32 * np.cos(np.radians(y)))
-    x = dlon + standard_lon
-    return y, x
-
-
-def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
-    """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)에서 진원까지의 남북/동서 거리(km)를 위경도 변화(도)로 변환하여 진원의 위경도 좌표(도)를 반환합니다.
-
-    기준점은 `data['P_trv']`가 최소인 관측소의 (latitude, longitude)입니다.
-    변환은 내부적으로 `_calc_km2deg` 함수를 사용하며,
-    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        기준점 계산을 위한 관측소 위경도(도) 정보를 포함. 최소 열: latitude, longitude
-    hypo_lat_km : float
-        기준점 대비 남북 거리(km) (+북/−남)
-    hypo_lon_km : float
-        기준점 대비 동서 거리(km) (+동/−서)
-
-    Returns
-    -------
-    hypo_lat_deg : float
-        진원의 위도(도)
-    hypo_lon_deg : float
-        진원의 경도(도)
-    """
-    lat_zero = data.loc[data["P_trv"].idxmin(), "latitude"]
-    lon_zero = data.loc[data["P_trv"].idxmin(), "longitude"]
-    hypo_lat_deg, hypo_lon_deg = _calc_km2deg(
-        lat_zero, lon_zero, hypo_lat_km, hypo_lon_km
-    )
-    return hypo_lat_deg, hypo_lon_deg
-
-
-def plot_station_locations(x_list, y_list, filename: str = "hypocenter.png"):
-    """
-    기준점(가장 먼저 P파가 도달한 관측소 위경도)을 원점으로 한 관측소 분포를 산점도로 저장합니다.
-
-    Parameters
-    ----------
-    x_list : Sequence[float]
-        관측소별 동서 방향 거리(km) (Easting_km, +동/−서)
-    y_list : Sequence[float]
-        관측소별 남북 방향 거리(km) (Northing_km, +북/−남)
-    filename : str, optional
-        출력 이미지 파일명, 기본값 "hypocenter.png"
-
-    Returns
-    -------
-    None
-        결과는 파일로 저장됩니다.
-    """
-    plt.scatter(x_list, y_list)
-    plt.xlabel("East (km)")
-    plt.ylabel("North (km)")
-    plt.title("Relative Station Locations")
-    plt.axis("equal")
-    plt.savefig(filename)
-
-
 def calc_pred(mp, vp, vs, data):
     """
     주어진 진원 파라미터와 속도 모델을 기반으로 각 관측소의
@@ -974,75 +881,36 @@ def calc_pred(mp, vp, vs, data):
     """
     dx = data.Easting_km - mp[0]  # 동서
     dy = data.Northing_km - mp[1]  # 남북
-    dz = data.elevation / 1000 - mp[2]  # 깊이
+    dz = (data.elevation / 1000.0) - mp[2]  # 깊이
     hypo_dist = np.sqrt(dx**2 + dy**2 + dz**2)
     data["hypo_dist_pred"] = hypo_dist
-    data["P_trv_pred"] = hypo_dist / vp
-    data["S_trv_pred"] = hypo_dist / vs
-    data["P_arr_pred"] = hypo_dist / vp + mp[3]
-    data["S_arr_pred"] = hypo_dist / vs + mp[3]
+    data["P_travel_pred"] = hypo_dist / vp
+    data["S_travel_pred"] = hypo_dist / vs
+    data["P_arrival_pred"] = (hypo_dist / vp) + mp[3]
+    data["S_arrival_pred"] = (hypo_dist / vs) + mp[3]
     return data
-
 
 def calc_res(data):
     """
-    실제 관측 도달시각과 예측 도달시각 간의 잔차를 계산합니다.
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        calc_pred() 실행 결과 생성된 DataFrame.
-        최소 열:
-        - P_arr, S_arr : P/S파 실제 도달시각
-        - P_arr_pred, S_arr_pred : P/S파 예상 도달시각
-
-    Returns
-    -------
-    res_p : ndarray
-        모든 관측소의 P파 도달시각 잔차 (관측치 - 예측치)
-    res_s : ndarray
-        유효한 관측소의 S파 도달시각 잔차 (관측치 - 예측치)
-    valid_s : ndarray of bool
-        S파 도달시각이 유효한 관측소를 나타내는 불리언 마스크
+    관측(UTCDatetime)과 예측(초) 사이의 도달시각 잔차를 계산.
     """
-    # P (모든 관측소 가정)
-    obs_p  = pd.to_numeric(data["P_trv"], errors="coerce")
-    pred_p = pd.to_numeric(data["P_trv_pred"], errors="coerce")
+    # P
+    obs_p  = data["P_arrival"].map(lambda x: float(x.timestamp))
+    pred_p = data["P_arrival_pred"]
     res_p  = (obs_p - pred_p).to_numpy(dtype=float)
 
-    # S (유효 관측소만)
-    if "S_trv" in data.columns and "S_trv_pred" in data.columns:
-        obs_s  = pd.to_numeric(data["S_trv"], errors="coerce")
-        pred_s = pd.to_numeric(data["S_trv_pred"], errors="coerce")
-        valid_s = obs_s.notna().to_numpy()
-        res_s = (obs_s[valid_s] - pred_s[valid_s]).to_numpy(dtype=float)
+    # S
+    if "S_arrival" in data.columns and "S_arrival_pred" in data.columns:
+        obs_s_full  = data["S_arrival"].map(lambda x: float(x.timestamp))
+        pred_s_full = data["S_arrival_pred"]
+        valid_s = obs_s_full.notna().to_numpy()
+        res_s = (obs_s_full[valid_s].astype(float).to_numpy()
+                 - pred_s_full[valid_s].astype(float).to_numpy())
     else:
         valid_s = np.zeros(len(data), dtype=bool)
-        res_s = np.array([], dtype=float)
+        res_s   = np.array([], dtype=float)
+
     return res_p, res_s, valid_s
-
-
-def Calc_rms(res_p, res_s):
-    """
-    P파 및 S파 잔차를 합쳐 전체 RMS를 계산합니다.
-
-    Parameters
-    ----------
-    res_p : ndarray
-        모든 관측소의 P파 도달시각 잔차 (관측치 - 예측치)
-    res_s : ndarray
-        유효한 관측소의 S파 도달시각 잔차 (관측치 - 예측치)
-
-    Returns
-    -------
-    res : ndarray
-        P파와 S파 잔차를 합친 전체 잔차
-    rms : float
-        전체 잔차의 RMS 값
-    """
-    res = np.hstack([res_p, res_s])
-    rms = np.sqrt(np.mean(res**2))
-    return res, rms
 
 
 def calc_G(mp, vp, vs, data, valid_s):
@@ -1106,6 +974,29 @@ def calc_G(mp, vp, vs, data, valid_s):
     return G
 
 
+def Calc_rms(res_p, res_s):
+    """
+    P파 및 S파 잔차를 합쳐 전체 RMS를 계산합니다.
+
+    Parameters
+    ----------
+    res_p : ndarray
+        모든 관측소의 P파 도달시각 잔차 (관측치 - 예측치)
+    res_s : ndarray
+        유효한 관측소의 S파 도달시각 잔차 (관측치 - 예측치)
+
+    Returns
+    -------
+    res : ndarray
+        P파와 S파 잔차를 합친 전체 잔차
+    rms : float
+        전체 잔차의 RMS 값
+    """
+    res = np.hstack([res_p, res_s])
+    rms = np.sqrt(np.mean(res**2))
+    return res, rms
+
+
 def get_dm(G, res):
     """
     모델 변수 dm을 구합니다.
@@ -1130,30 +1021,151 @@ def get_dm(G, res):
     return dm
 
 
-def calc_hypocenter(data_rel, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
+def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
     """
-    선형화 역산을 수행하여 진원의 위치와 진원시를 추정합니다.
+    기준점으로부터의 남북/동서 거리(km)를 위경도 좌표(도)로 변환합니다.
+
+    Notes
+    -----
+    - 입력은 (y_km, x_km) 순서입니다.
+      y_km = 북쪽(+) / 남쪽(−) 거리 [km]
+      x_km = 동쪽(+) / 서쪽(−) 거리 [km]
+    - 경도(동서) 환산 시 결과 위도(lat)에 대해 cos 보정을 적용합니다.
 
     Parameters
     ----------
-    data : DataFrame
-        관측소 정보 및 실제 도달시각을 포함한 DataFrame
-    iteration : int
-        최대 반복 횟수
-    mp : ndarray
-        초기 진원 추정값 [X, Y, Z, T] (km, s)
-    vp : float
-        P파 속도 (km/s)
-    vs : float
-        S파 속도 (km/s)
+    standard_lat : float
+        기준점 위도(도)
+    standard_lon : float
+        기준점 경도(도)
+    y_km : float
+        기준점 대비 남북 거리(km) (+북/−남)
+    x_km : float
+        기준점 대비 동서 거리(km) (+동/−서)
 
     Returns
     -------
-    result_df : DataFrame
-        각 반복 단계에서 추정된 [X, Y, Z, T, RMS] 값을 담은 DataFrame
+    lat : float
+        변환된 위도(도)
+    lon : float
+        변환된 경도(도)
     """
+    dlat = y_km / 111.32
+    y = dlat + standard_lat
+    dlon = x_km / (111.32 * np.cos(np.radians(y)))
+    x = dlon + standard_lon
+    return y, x
+
+
+def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
+    """
+    기준점(가장 먼저 P파가 도달한 관측소의 위경도)에서 진원까지의 남북/동서 거리(km)를 위경도 변화(도)로 변환하여 진원의 위경도 좌표(도)를 반환합니다.
+
+    기준점은 `data['P_trv']`가 최소인 관측소의 (latitude, longitude)입니다.
+    변환은 내부적으로 `_calc_km2deg` 함수를 사용하며,
+    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        기준점 계산을 위한 관측소 위경도(도) 정보를 포함. 최소 열: latitude, longitude
+    hypo_lat_km : float
+        기준점 대비 남북 거리(km) (+북/−남)
+    hypo_lon_km : float
+        기준점 대비 동서 거리(km) (+동/−서)
+
+    Returns
+    -------
+    hypo_lat_deg : float
+        진원의 위도(도)
+    hypo_lon_deg : float
+        진원의 경도(도)
+    """
+    lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
+    lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
+    hypo_lat_deg, hypo_lon_deg = _calc_km2deg(
+        lat_zero, lon_zero, hypo_lat_km, hypo_lon_km
+    )
+    return hypo_lat_deg, hypo_lon_deg
+
+def calc_G(mp, vp, vs, data, valid_s):
+    """
+    P파 및 S파에 대한 G 행렬 계산. (단위: km, s)
+    """
+    R_all = (
+        np.sqrt(
+            (mp[0] - data.Easting_km) ** 2
+            + (mp[1] - data.Northing_km) ** 2
+            + (mp[2] - (data.elevation / 1000.0)) ** 2   # m → km
+        )
+        + 1e-12
+    )
+
+    G_x_p = (mp[0] - data.Easting_km) / (vp * R_all)
+    G_y_p = (mp[1] - data.Northing_km) / (vp * R_all)
+    G_z_p = (mp[2] - (data.elevation / 1000.0)) / (vp * R_all)
+    G_t_p = np.ones(len(data))
+    G_p   = np.vstack([G_x_p, G_y_p, G_z_p, G_t_p]).T
+
+    m = valid_s.to_numpy() if hasattr(valid_s, "to_numpy") else valid_s
+    if np.any(m):
+        R_s = (
+            np.sqrt(
+                (mp[0] - data.Easting_km[m]) ** 2
+                + (mp[1] - data.Northing_km[m]) ** 2
+                + (mp[2] - (data.elevation[m] / 1000.0)) ** 2
+            )
+            + 1e-12
+        )
+        G_x_s = (mp[0] - data.Easting_km[m]) / (vs * R_s)
+        G_y_s = (mp[1] - data.Northing_km[m]) / (vs * R_s)
+        G_z_s = (mp[2] - (data.elevation[m] / 1000.0)) / (vs * R_s)
+        G_t_s = np.ones(int(np.count_nonzero(m)))
+        G_s   = np.vstack([G_x_s, G_y_s, G_z_s, G_t_s]).T
+        G     = np.vstack([G_p, G_s])
+    else:
+        G = G_p
+    return G
+
+import time
+
+def calc_hypocenter(data_rel, iteration=10,
+                    mp=np.array([0.0, 0.0, 10.0, 0.0]),
+                    vp=np.mean([5.63, 6.17]),
+                    vs=np.mean([3.39, 3.61])):
+    """
+    선형화 역산으로 [X,Y,Z,T] 추정.
+    - T는 'epoch seconds(절대시각)'로 해석하여 출력 (UTC).
+    - 매 Iteration마다 위/경/깊이/시각/RMS를 포맷 맞춰 출력.
+    """
+    def _fmt_time_from_epoch(ts: float) -> str:
+        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{int(dt.microsecond/1000):03d}"
+
+
+    # --- mean_origin 계산 ---
+    origin_times = []
+    for _, row in data_rel.iterrows():
+        if pd.notna(row["S_arrival"]):
+            p_arrival = row["P_arrival"]
+            s_arrival = row["S_arrival"]
+            origin_time = p_arrival - (s_arrival - p_arrival) / ((vp/vs) - 1.0)
+            origin_times.append(origin_time)
+        else:
+            origin_times.append(row["P_arrival"])
+    ts = np.array([ot.timestamp for ot in origin_times], dtype=float)
+    mean_origin = UTCDateTime(ts.mean())
+
+    mp = mp.copy()
+    if mp[3] == 0.0:
+        mp[3] = float(mean_origin.timestamp)
+
+    print('선형화 역산을 수행합니다...')
+    header_bar = "=" * 80
+    print(header_bar)
+
     results = []
-    for _ in range(iteration):
+    for it in range(iteration):
         pred_data = calc_pred(mp, vp, vs, data_rel)
         res_p, res_s, valid_s = calc_res(pred_data)
 
@@ -1162,23 +1174,41 @@ def calc_hypocenter(data_rel, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0
         dm = get_dm(G, res)
         mp = mp + dm
 
-        result = [mp[0], mp[1], mp[2], mp[3], rms]
-        results.append(result)
+        results.append([mp[0], mp[1], mp[2], mp[3], rms])
 
-        if rms < 0.02:
-            break
-    
+        east_km  = float(mp[0])
+        north_km = float(mp[1])
+        depth    = float(mp[2])
+        T_abs    = float(mp[3])
+        lat_deg, lon_deg = calc_hypocenter_coords(data_rel, north_km, east_km)
+
+        # 예시 양식처럼 한 줄로 포맷 출력
+        print(
+            f"Iteration {it+1:<2d} | "
+            f"위도: {lat_deg:>8.5f}° | "
+            f"경도: {lon_deg:>9.5f}° | "
+            f"깊이: {depth:>6.2f} km | "
+            f"시각(UTC): {_fmt_time_from_epoch(T_abs):<26} | "
+            f"RMS: {rms:>7.3f}"
+        )
+        time.sleep(0.2)   # ✅ 각 iteration마다 출력 간격 0.2초
+
+    print(header_bar)
     result_df = pd.DataFrame(results, columns=["X", "Y", "Z", "T", "RMS"])
-    east_km = float(result_df.iloc[-1]["X"])
-    north_km = float(result_df.iloc[-1]["Y"])
-    depth = result_df["Z"].iloc[-1]
-    rms = result_df["RMS"].iloc[-1]
-    origin = result_df["T"].iloc[-1]
-    hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
-    hypo = (hypo_lat, hypo_lon)
-    print(f"총 {len(result_df)}번 역산 결과, 지진이 발생한 지점은 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.5f} km, 시각은 {origin_time + origin} 입니다. (RMS : {rms})")
-    return result_df, data_rel
 
+    east_km  = float(result_df.iloc[-1]["X"])
+    north_km = float(result_df.iloc[-1]["Y"])
+    depth    = float(result_df.iloc[-1]["Z"])
+    rms      = float(result_df.iloc[-1]["RMS"])
+    T_abs    = float(result_df.iloc[-1]["T"])
+    origin   = UTCDateTime(T_abs)
+
+    hypo_lat, hypo_lon = calc_hypocenter_coords(data_rel, north_km, east_km)
+    print(
+        f"최종 추정 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
+        f"깊이 : {depth:.2f} km, 시각(UTC) : {_fmt_time_from_epoch(T_abs)}, RMS : {rms:.3f}"
+    )
+    return result_df,
 
 def plot_map(
     data: pd.DataFrame,
