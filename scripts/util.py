@@ -799,7 +799,6 @@ def calc_relative_distance(data):
     """
     lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
     lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
-    print(lat_zero, lon_zero)
     northing_km, easting_km = _calc_deg2km(
         lat_zero, lon_zero, data["latitude"].to_numpy(), data["longitude"].to_numpy()
     )
@@ -1131,7 +1130,7 @@ def get_dm(G, res):
     return dm
 
 
-def calc_hypocenter(data_rel, picks_total, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
+def calc_hypocenter(data_rel, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
     """
     선형화 역산을 수행하여 진원의 위치와 진원시를 추정합니다.
 
