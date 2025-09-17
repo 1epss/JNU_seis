@@ -19,7 +19,7 @@ from typing import Any, Tuple, List, Optional
 
 # ====== Module metadata ======
 __title__ = "util"
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
@@ -45,7 +45,7 @@ def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
         data: pd.DataFrame = pickle.load(f)
 
     if verbose:
-        print("데이터를 불러옵니다...")
+        print("자료를 불러옵니다...")
         print("=" * 80)
         for _, row in data.iterrows():
             print("관측소: {net:<2}.{sta:<5} | 채널: {cha:<3} | 기간(UTC): {start} ~ {end}".format(
@@ -56,7 +56,7 @@ def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
                 end=row["endtime"].strftime("%Y-%m-%d %H:%M:%S")))
             time.sleep(0.1)
         print("=" * 80)
-        print(f"총 {len(data)}개의 데이터를 불러왔습니다.")
+        print(f"총 {len(data)}건의 자료를 불러왔습니다.")
 
     return data
 
@@ -671,10 +671,10 @@ def picking(
         
     # ===== verbose 출력 (실제 픽 결과 기반) =====
     if verbose:
-        print("인공지능 모델을 이용하여 지진파 위상을 식별합니다...")
+        print("인공지능 모델을 이용하여 지진파의 도달시각을 결정합니다...")
         print("=" * 80)
         if picks_total.empty:
-            print("유효한 P/S 도달시각이 없습니다.")
+            print("유효한 지진파 도달시각이 없습니다.")
         else:
             for _, r in picks_total.iterrows():
                 net = f"{str(r['network']):<2}"
@@ -701,7 +701,7 @@ def picking(
                 )
                 time.sleep(0.1)
         print("=" * 80)
-        print(f"총 {len(data)}개의 관측소에서 {len(picks_total)}개의 지진파 위상을 식별했습니다.")
+        print(f"총 {len(data)}개의 관측소에서 {len(picks_total)}건의 지진파 도달시각을 결정했습니다.")
 
     return data_rel
 
@@ -1127,7 +1127,6 @@ def calc_G(mp, vp, vs, data, valid_s):
         G = G_p
     return G
 
-import time
 
 def calc_hypocenter(data_rel, iteration=10,
                     mp=np.array([0.0, 0.0, 10.0, 0.0]),
