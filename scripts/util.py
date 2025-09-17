@@ -193,11 +193,6 @@ def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html"
 
 
 ## ====== picking ====== 
-
-## ====== picking ======
-
-# data 에서 st를 추출하고, 거기서 get_scnl 돌리는데, 하나만 하냐, 여러개 하냐로 구분하기?
-
 def extract_stream(data: pd.DataFrame) -> Stream:
     """
     DataFrame의 'data' 열에서 ObsPy Stream 객체들을 모아 하나의 Stream으로 합칩니다.
@@ -610,11 +605,10 @@ def picking(
                 phase = str(r['phase']).upper()
 
                 # 도달시각: 밀리초까지 표시 (YYYY-mm-dd HH:MM:SS.sss)
-                try:
-                    arr_dt = pd.to_datetime(r['arrival'])
-                    arrival_str = arr_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                except Exception:
-                    arrival_str = str(r['arrival'])
+                arr_dt = str(r['arrival'])
+                arr_dt = pd.to_datetime(arr_dt)
+                arr_dt = arr_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
 
                 # 확률: 퍼센트(0~100)로 2자리 소수
                 if pd.notna(r['prob']):
@@ -625,9 +619,9 @@ def picking(
 
                 print(
                     f"관측소: {net}.{sta} | 채널: {cha} | "
-                    f"{phase}파 도달시각: {arrival_str} | 예측 확률: {prob_str}"
+                    f"{phase}파 도달시각(UTC): {arr_dt} | 예측 확률: {prob_str}"
                 )
-                time.sleep(0.02)
+                time.sleep(0.1)
         print("=" * 80)
         print(f"총 {len(data)}개의 관측소에서 {len(picks_total)}개의 지진파 위상을 추출했습니다.")
 
