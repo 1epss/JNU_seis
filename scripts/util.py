@@ -1208,19 +1208,19 @@ def calc_hypocenter(data_rel, iteration=10,
         f"최종 추정 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
         f"깊이 : {depth:.2f} km, 시각(UTC) : {_fmt_time_from_epoch(T_abs)}, RMS : {rms:.3f}"
     )
-    return result_df,
+    return result_df
 
-def plot_map(
+
+def plot_hypocenter(
     data: pd.DataFrame,
     result_df: pd.DataFrame | None = None,
     center=None,
-    html_out="map.html",
+    html_out="hypocenter.html",
     zoom_start=8,
-    # 표시 토글
     show_station_labels=True,
-    show_hypocenter=False,
-    show_rings=False,
-    show_ring_labels=False,
+    show_hypocenter=True,
+    show_rings=True,
+    show_ring_labels=True,
     use_auto_label=True,
     rings_km=(30, 50, 100),
 ):
@@ -1265,7 +1265,7 @@ def plot_map(
 
     hypo = None
 
-    # 진원 마커(옵션)
+    # 진원 마커
     if show_hypocenter:
         if result_df is None:
             raise ValueError("show_hypocenter=True 이면 result_df가 필요합니다.")
@@ -1282,9 +1282,7 @@ def plot_map(
             tooltip="Hypocenter",
         ).add_to(m)
 
-
-        
-    # 반경 원/라벨(옵션)
+    # 반경 원/라벨
     if show_rings:
         for rk in rings_km:
             folium.Circle(location=center, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
@@ -1313,7 +1311,7 @@ def plot_map(
                        force_separate_button=True).add_to(m)
 
     m.save(html_out)
-    return m
+    display(m)
 
 
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
