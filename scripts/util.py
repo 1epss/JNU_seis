@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 from obspy import UTCDateTime, Stream, Trace
 from scipy.sparse.linalg import cg
 from pathlib import Path
-from typing import Any, Tuple, List
+from typing import Any, Tuple, List, Optional
 
 # ====== Module metadata ======
 __title__ = "util"
@@ -59,62 +59,145 @@ def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
     return data
 
 
-def plot_data(data: pd.DataFrame, network: str, station: str, channel: str) -> None:
+def plot_data(
+    data: pd.DataFrame,
+    network: str,
+    station: str,
+    channel: str,
+    picking: bool = False,
+    model: str = 'KFpicker_20230217.h5',
+    twin: int = 3000,
+    stride: int = 3000,
+    verbose: bool = True,
+) -> None:
     """
-    입력받은 관측소의 3성분 파형을 시각화합니다.
+    입력 조건(네트워크/관측소/채널 접두사)에 맞는 파형을 시각화합니다.
+    - 기본: 단일 관측소의 3성분 파형을 시간축(UTC) 기준으로 플로팅
+    - picking=True: 필터링된 SCNL 모두에 대해 pick_single() 수행 후 plot_results() 호출
 
     Parameters
     ----------
     data : pandas.DataFrame
-        지진파 데이터가 담긴 DataFrame. 
-        'network', 'station', 'channel', 'data' 열을 포함해야 합니다.
+        지진파 데이터가 담긴 DataFrame.
+        최소 열: 'network', 'station', 'channel', 'data' (data는 ObsPy Stream)
     network : str
         네트워크명.
     station : str
         관측소명.
     channel : str
         채널명 접두사 (예: 'HG', 'HH').
+    picking : bool, optional
+        True이면 SCNL 전량에 대해 위상 픽킹 및 결과 플롯을 수행. 기본 False.
+    model : Any, optional
+        픽킹에 사용할 학습 모델(예: KFpicker 등). picking=True일 때 필요.
+    twin : float, optional
+        pick_single 윈도 길이(초).
+    stride : float, optional
+        pick_single 슬라이드 간격(초).
+    verbose : bool, optional
+        진행 로그 출력 여부.
+
+    Notes
+    -----
+    - pick_single(), plot_results(), extract_stream()은 외부에서 제공된다고 가정.
+    - picking=True일 때는 개별 SCNL 단위 결과 플롯(plot_results)을 수행.
+    - 기본 플롯(3성분 파형)은 첫 번째 일치 row의 Stream을 사용.
     """
-    # 조건에 맞는 데이터를 필터링합니다.
-    filtered_data = data[
-        (data['network'] == network) &
-        (data['station'] == station) &
-        (data['channel'].str.startswith(channel, na=False))
+    # 0) 모델 로드
+    model = tf.keras.models.load_model(model, compile=False)
+
+    # 1) 조건에 맞는 데이터 필터링
+    filtered = data[
+        (data["network"] == network)
+        & (data["station"] == station)
+        & (data["channel"].str.startswith(channel, na=False))
     ]
 
-    if filtered_data.empty:
+    if filtered.empty:
         print(f"해당 조건의 데이터가 없습니다. (네트워크: {network}, 관측소: {station}, 채널: {channel})")
         return
 
-    row = filtered_data.iloc[0]
-    stream = row['data']
+    # 2) picking 모드가 아닐 때: 단일 관측소 3성분 파형 플롯
+    if not picking:
+        row = filtered.iloc[0]
+        stream = row["data"]
 
-    fig = plt.figure(figsize=(7, 5))
+        fig = plt.figure(figsize=(7, 5))
+        for i, trace in enumerate(stream):
+            ax = fig.add_subplot(len(stream), 1, i + 1)
 
-    for i, trace in enumerate(stream):
-        ax = fig.add_subplot(len(stream), 1, i + 1)
+            n = trace.stats.npts
+            dt = trace.stats.delta
+            t0 = trace.stats.starttime
+            time_vector = [(t0 + j * dt).datetime for j in range(n)]
 
-        # 각 trace의 실제 시작시각 기준으로 X축 용 시간 벡터 생성
-        n = trace.stats.npts
-        dt = trace.stats.delta
-        t0 = trace.stats.starttime
-        time_vector = [(t0 + j * dt).datetime for j in range(n)]
+            ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
+            ax.set_ylabel("Count")
+            ax.legend(loc="upper right")
 
-        ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
-        ax.set_ylabel("Count")
-        ax.legend(loc='upper right')
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            if i < len(stream) - 1:
+                ax.set_xticks([])
+            else:
+                ax.set_xlabel("Time (UTC)")
 
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-        
-        if i < len(stream) - 1:
-            ax.set_xticks([])
-        else:
-            ax.set_xlabel("Time (UTC)")
+        plt.suptitle(f"{network}.{station}..{channel}")
+        plt.tight_layout()
+        plt.show()
+        return
 
-    plt.suptitle(f"{network}.{station}..{channel}")
-    plt.tight_layout()
-    plt.show()
+    # 3) picking 모드: SCNL 전량에 대해 pick_single → plot_results
+    #    extract_stream은 data 전체에서 Stream을 하나로 합친다고 가정
+    try:
+        st = extract_stream(data)  # 외부 제공 함수
+    except Exception as e:
+        print(f"[error] extract_stream 실패: {e}")
+        return
 
+    scnl_df = filtered.loc[:, ["network", "station", "channel"]].copy()
+
+    if scnl_df.empty:
+        print("[warn] picking=True 이지만 조건에 맞는 SCNL이 없습니다.")
+        return
+
+    for _, r in scnl_df.iterrows():
+        net, sta, cha = r.network, r.station, r.channel
+        try:
+            # 모델 적용 및 결과 산출
+            enz_array, Y_med, startT = pick_single(
+                st.copy(),
+                net,
+                sta,
+                cha,
+                twin=twin,
+                stride=stride,
+                model=model,
+            )
+
+            # Fs 추출 (없으면 None)
+            sel = st.select(network=net, station=sta, channel=f"{cha}*")
+            fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
+
+            # 결과 플롯
+            try:
+                plot_results(
+                    net,
+                    sta,
+                    cha,
+                    enz_array,
+                    Y_med,
+                    starttime=startT,
+                    fs=fs,
+                )
+            except Exception as pe:
+                # plot 실패 시, 최소한 기본 인자만으로 재시도
+                if verbose:
+                    print(f"[plot warning] {net}.{sta}.{cha}: {pe}")
+                plot_results(net, sta, cha, enz_array, Y_med)
+
+        except Exception as e:
+            print(f"[pick warning] {net}.{sta}.{cha}: {e}")
+    
 
 def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html", zoom_start: int = 10, show_station_labels: bool = True) -> folium.Map:
     """
@@ -471,7 +554,7 @@ def plot_results(net, stn, chn, data_total, Y_total, starttime=None, fs=None):
     plt.suptitle(f"{net}.{stn}..{chn}")
     plt.show()
 
-
+    
 def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     """
     확률 시퀀스에서 P/S 피크를 검출해 도달시각 리스트를 생성합니다.
@@ -506,11 +589,12 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
 
 def picking(
     data: pd.DataFrame,
-    model,
+    model: str = 'KFpicker_20230217.h5',
     twin: int = 3000,
     stride: int = 3000,
-    plot: bool = False,
     verbose: bool = True,
+    vp = np.mean([5.63, 6.17]), 
+    vs = np.mean([3.39, 3.61])
 ) -> pd.DataFrame:
     """
     여러 SCNL에 대해 일괄 픽킹을 수행하고, 필요 시 결과 플롯을 그린 뒤,
@@ -526,8 +610,6 @@ def picking(
         Window 길이(샘플).
     stride : int, default 3000
         Window 간격(샘플).
-    plot : bool, default True
-        True이면 각 SCNL별 결과 plot 생성.
     verbose : bool, default True
         True이면 진행 상황 및 결과 요약을 출력.
 
@@ -537,6 +619,9 @@ def picking(
         모든 관측소/채널에 대한 도달시각 테이블
         columns = ['network','station','channel','arrival','prob','phase'].
     """
+    # 모델 불러오기
+    model = tf.keras.models.load_model('KFpicker_20230217.h5', compile=False)
+
     # 전체 Stream 구성 (사용자 정의 함수)
     st = extract_stream(data)
 
@@ -554,19 +639,6 @@ def picking(
         )
         Y_buf.append(Y_med)
         startT_buf.append(startT)
-
-        if plot:
-            sel = st.select(network=network, station=station, channel=f"{channel}*")
-            fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
-            try:
-                plot_results(
-                    network, station, channel,
-                    enz_array, Y_med,
-                    starttime=startT, fs=fs
-                )
-            except Exception as e:
-                print(f"[plot warning] {network}.{station}.{channel}: {e}")
-                plot_results(network, station, channel, enz_array, Y_med)
 
     # ===== start_time 기록 =====
     scnl_df["start_time"] = startT_buf
@@ -591,6 +663,10 @@ def picking(
             columns=["network", "station", "channel", "arrival", "prob", "phase"]
         )
 
+    origin_time = _calc_origintime(picks_total, vp, vs)
+
+    data_rel = build_relative_dataset(picks_total, data, origin_time)
+        
     # ===== verbose 출력 (실제 픽 결과 기반) =====
     if verbose:
         print("인공지능 모델을 이용하여 지진파 위상을 식별합니다...")
@@ -625,7 +701,8 @@ def picking(
         print("=" * 80)
         print(f"총 {len(data)}개의 관측소에서 {len(picks_total)}개의 지진파 위상을 식별했습니다.")
 
-    return picks_total
+    return data_rel
+
 
 ## ====== Calculate hypocenter and origin time ====== 
 def _calc_origintime(picks_total, vp, vs):
@@ -658,6 +735,10 @@ def _calc_origintime(picks_total, vp, vs):
 
         mean_origin = UTCDateTime(mean_ts)
     return mean_origin
+
+vp = np.mean([5.63, 6.17])
+vs = np.mean([3.39, 3.61])
+origin_time = _calc_origintime(picks_total, vp, vs)
 
 
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
@@ -696,6 +777,80 @@ def _calc_deg2km(standard_lat, standard_lon, lat, lon):
     return y, x
 
 
+def calc_relative_distance(data):
+    """
+    기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산하여 반환합니다.
+
+    기준점은 `data['P_travel']`가 최소인 관측소의 (latitude, longitude)입니다.
+    변환은 내부적으로 `_calc_deg2km` 함수를 사용하며,
+    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        관측소 위경도(도) 및 P파 주행시간을 가진 DataFrame. 최소 열:
+        - latitude, longitude, P_travel
+
+    Returns
+    -------
+    data : pandas.DataFrame
+        Easting_km, Northing_km 열이 추가된 DataFrame
+    data["Easting_km"].tolist() : list[float]
+        관측소별 동서 거리(km) 리스트 (동쪽 +)
+    data["Northing_km"] : list[float]
+        관측소별 남북 거리(km) 리스트 (북쪽 +)
+    """
+    lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
+    lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
+    print(lat_zero, lon_zero)
+    northing_km, easting_km = _calc_deg2km(
+        lat_zero, lon_zero, data["latitude"].to_numpy(), data["longitude"].to_numpy()
+    )
+
+    data = data.copy()
+    data["Easting_km"] = easting_km.tolist()
+    data["Northing_km"] = northing_km.tolist()
+    return data
+
+
+def build_relative_dataset(
+    data: pd.DataFrame,
+    picks_total: pd.DataFrame,
+    origin_time: UTCDateTime | None = None
+    ):
+    """
+    picks_total(관측 도달시각) + data(관측소 메타)를 병합하여
+    origin_time 기준 주행시간(P_trv/S_trv)과 상대 위치/거리 테이블을 생성.
+    """
+    merged_data = picks_total.merge(data, on=["network","station","channel"], how="left")
+
+    pivot = merged_data.pivot_table(
+        index=["network","station","channel","latitude","longitude","elevation"],
+        columns="phase",
+        values=["arrival","prob"],
+        aggfunc="first"
+    )
+
+    # ('arrival','P')->'P_arr', ('prob','P')->'P_prob'
+    pivot.columns = [f"{ph}_{col}" for col, ph in pivot.columns]
+    pivot = pivot.reset_index()
+
+    # 도달시각 → 주행시간(초)
+    def _to_tt(x):
+        if pd.isna(x):
+            return np.nan
+        return float(UTCDateTime(x) - origin_time)
+
+    if "P_arrival" in pivot.columns:
+        pivot["P_travel"] = pivot["P_arrival"].apply(_to_tt)
+    if "S_arrival" in pivot.columns:
+        pivot["S_travel"] = pivot["S_arrival"].apply(_to_tt)
+
+    # 상대 위치/거리 계산
+    data_rel = calc_relative_distance(pivot)
+    return data_rel
+
+
 def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
     """
     기준점으로부터의 남북/동서 거리(km)를 위경도 좌표(도)로 변환합니다.
@@ -730,125 +885,6 @@ def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
     dlon = x_km / (111.32 * np.cos(np.radians(y)))
     x = dlon + standard_lon
     return y, x
-
-
-def calc_relative_distance(data):
-    """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산하여 반환합니다.
-
-    기준점은 `data['P_trv']`가 최소인 관측소의 (latitude, longitude)입니다.
-    변환은 내부적으로 `_calc_deg2km` 함수를 사용하며,
-    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        관측소 위경도(도) 및 P파 주행시간을 가진 DataFrame. 최소 열:
-        - latitude, longitude, P_trv
-
-    Returns
-    -------
-    data : pandas.DataFrame
-        Easting_km, Northing_km 열이 추가된 DataFrame
-    data["Easting_km"].tolist() : list[float]
-        관측소별 동서 거리(km) 리스트 (동쪽 +)
-    data["Northing_km"] : list[float]
-        관측소별 남북 거리(km) 리스트 (북쪽 +)
-    """
-    lat_zero = data.loc[data["P_trv"].idxmin(), "latitude"]
-    lon_zero = data.loc[data["P_trv"].idxmin(), "longitude"]
-
-    northing_km, easting_km = _calc_deg2km(
-        lat_zero, lon_zero, data["latitude"].to_numpy(), data["longitude"].to_numpy()
-    )
-
-    data = data.copy()
-    data["Easting_km"] = easting_km.tolist()
-    data["Northing_km"] = northing_km.tolist()
-    return data, data["Easting_km"].tolist(), data["Northing_km"].tolist()
-
-
-def build_relative_dataset(
-    picks_total: pd.DataFrame,
-    data: pd.DataFrame,
-    origin_time: UTCDateTime | None = None
-):
-    """
-    picks_total(관측 도달시각) + data(관측소 메타)를 병합하여
-    origin_time 기준 주행시간(P_trv/S_trv)과 상대 위치/거리 테이블을 생성.
-    """
-    # --- 컬럼 소문자화 & 표준화 ---
-    pkt = picks_total.copy()
-    pkt.columns = [c.lower() for c in pkt.columns]
-    dfm = data.copy()
-    dfm.columns = [c.lower() for c in dfm.columns]
-    # 메타 컬럼 표준화(있을 때만)
-    dfm = dfm.rename(columns={"stelev": "elevation", "stla": "latitude", "stlo": "longitude"})
-    # phase 표준화
-    if "phase" in pkt.columns:
-        pkt["phase"] = pkt["phase"].astype(str).str.upper()
-    # pivot에서 P_arr/S_arr가 되도록 미리 리네임
-    if "arrival" in pkt.columns:
-        pkt = pkt.rename(columns={"arrival": "arr"})
-
-    # --- 필수 컬럼 체크 ---
-    need_picks = {"network","station","channel","arr","prob","phase"}
-    need_meta  = {"network","station","channel","latitude","longitude","elevation"}
-    miss1 = need_picks - set(pkt.columns)
-    miss2 = need_meta  - set(dfm.columns)
-    if miss1:
-        raise ValueError(f"picks_total 필수 컬럼 누락: {sorted(miss1)}")
-    if miss2:
-        raise ValueError(f"data 필수 컬럼 누락: {sorted(miss2)}")
-
-    # --- origin_time 결정 ---
-    if origin_time is None:
-        if "origintime" in dfm.columns:
-            uniq = dfm["origintime"].dropna().unique()
-            if len(uniq) == 1:
-                origin_time = UTCDateTime(uniq[0])
-            else:
-                raise ValueError("origin_time을 인자로 주거나, data['origintime']가 단일값이어야 합니다.")
-        else:
-            raise ValueError("origin_time을 인자로 주거나, data에 'origintime' 컬럼이 필요합니다.")
-    elif not isinstance(origin_time, UTCDateTime):
-        origin_time = UTCDateTime(origin_time)
-
-    # --- 병합 & 피벗 ---
-    meta = dfm[["network","station","channel","latitude","longitude","elevation"]].drop_duplicates()
-    merged_df = pkt.merge(meta, on=["network","station","channel"], how="left")
-
-    pivot_df = merged_df.pivot_table(
-        index=["network","station","channel","latitude","longitude","elevation"],
-        columns="phase",
-        values=["arr","prob"],
-        aggfunc="first"
-    )
-    # ('arr','P')->'P_arr', ('prob','P')->'P_prob'
-    pivot_df.columns = [f"{ph}_{col}" for col, ph in pivot_df.columns]
-    pivot_df = pivot_df.reset_index()
-
-    data_out = pivot_df.copy()
-
-    # --- 도달시각 → 주행시간(초)
-    def _to_tt(x):
-        if pd.isna(x):
-            return np.nan
-        return float(UTCDateTime(x) - origin_time)
-
-    if "P_arr" in data_out.columns:
-        data_out["P_trv"] = data_out["P_arr"].apply(_to_tt)
-    if "S_arr" in data_out.columns:
-        data_out["S_trv"] = data_out["S_arr"].apply(_to_tt)
-
-    # 관측 도달시각을 주행시간으로 덮어쓰지 말 것! (혼란 유발)
-    # data_out['P_arr'] = data_out.get('P_trv', None)  # <-- 삭제
-    # data_out['S_arr'] = data_out.get('S_trv', None)  # <-- 삭제
-
-    # --- 상대 위치/거리 계산 ---
-    data_rel, x_list, y_list = calc_relative_distance(data_out)
-    return data_rel, x_list, y_list
-
 
 
 def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
@@ -1098,10 +1134,7 @@ def get_dm(G, res):
     return dm
 
 
-
-
-
-def calc_hypocenter(data, picks_total, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
+def calc_hypocenter(data_rel, picks_total, iteration = 10, mp = np.array([0.0, 0.0, 10.0, 2.0]), vp = np.mean([5.63, 6.17]), vs = np.mean([3.39, 3.61])):
     """
     선형화 역산을 수행하여 진원의 위치와 진원시를 추정합니다.
 
@@ -1123,10 +1156,6 @@ def calc_hypocenter(data, picks_total, iteration = 10, mp = np.array([0.0, 0.0, 
     result_df : DataFrame
         각 반복 단계에서 추정된 [X, Y, Z, T, RMS] 값을 담은 DataFrame
     """
-    origin_time = _calc_origintime(picks_total, vp, vs)
-
-    data_rel, x_list, y_list = build_relative_dataset(picks_total, data, origin_time)
-    
     results = []
     for _ in range(iteration):
         pred_data = calc_pred(mp, vp, vs, data_rel)
@@ -1142,8 +1171,16 @@ def calc_hypocenter(data, picks_total, iteration = 10, mp = np.array([0.0, 0.0, 
 
         if rms < 0.02:
             break
-
+    
     result_df = pd.DataFrame(results, columns=["X", "Y", "Z", "T", "RMS"])
+    east_km = float(result_df.iloc[-1]["X"])
+    north_km = float(result_df.iloc[-1]["Y"])
+    depth = result_df["Z"].iloc[-1]
+    rms = result_df["RMS"].iloc[-1]
+    origin = result_df["T"].iloc[-1]
+    hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
+    hypo = (hypo_lat, hypo_lon)
+    print(f"총 {len(result_df)}번 역산 결과, 지진이 발생한 지점은 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.5f} km, 시각은 {origin_time + origin} 입니다. (RMS : {rms})")
     return result_df, data_rel
 
 
@@ -1219,14 +1256,12 @@ def plot_map(
             tooltip="Hypocenter",
         ).add_to(m)
 
-        depth = result_df["Z"].iloc[-1]
-        rms = result_df["RMS"].iloc[-1]
-        print(f"총 {len(result_df)}번 역산 결과, 지진이 발생한 지점은 위도: {hypo_lat:.5f}, 경도: {hypo_lon:.5f}, 깊이: {depth:.5f} km 입니다. (RMS : {rms})")
+
         
     # 반경 원/라벨(옵션)
     if show_rings:
         for rk in rings_km:
-            folium.Circle(location=center, color="black", fill_opacity=0, radius=rk * 1000.0).add_to(m)
+            folium.Circle(location=center, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
 
         if show_ring_labels:
             lat0 = center[0]
