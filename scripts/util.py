@@ -1106,6 +1106,7 @@ def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     )
     return hypo_lat_deg, hypo_lon_deg
 
+
 def calc_G(mp, vp, vs, data, valid_s):
     """
     P파 및 S파에 대한 G 행렬 계산. (단위: km, s)
@@ -1302,7 +1303,7 @@ def plot_hypocenter(
     # 반경 원/라벨
     if show_rings:
         for rk in rings_km:
-            folium.Circle(location=center, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
+            folium.Circle(location=hypo, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
 
         if show_ring_labels:
             lat0 = center[0]
