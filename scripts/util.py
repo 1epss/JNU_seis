@@ -834,9 +834,9 @@ def plot_picking(
             ax3.plot(times, enz_array[:, 2], "k", label="Z")
             ax1.set_xticks([]); ax2.set_xticks([]); ax3.set_xticks([])
 
-            ax4.plot(times, Y_med[:, 0], label="P", "b", zorder=10)
-            ax4.plot(times, Y_med[:, 1], label="S", "r", zorder=10)
-            ax4.plot(times, Y_med[:, 2], label="Noise", "gray")
+            ax4.plot(times, Y_med[:, 0], label="P", color = "blue", zorder=10)
+            ax4.plot(times, Y_med[:, 1], label="S", color = "red", zorder=10)
+            ax4.plot(times, Y_med[:, 2], label="Noise", color = "gray")
 
             ax1.legend(loc="upper right")
             ax2.legend(loc="upper right")
