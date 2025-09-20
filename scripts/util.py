@@ -739,9 +739,9 @@ def plot_picking(
     verbose: bool = True,
 ) -> None:
     """
-    주어진 DataFrame에서 특정 station만 골라
-    인공지능 픽킹(_pick_single) 후 결과를 플로팅(_plot_results)합니다.
-    (network, channel prefix는 data에서 자동으로 가져옵니다)
+    주어진 DataFrame에서 특정 station만 골라 모델 예측(P/S 확률)을 수행하고,
+    3성분 파형 + [P,S,Noise] 확률을 한 Figure에 바로 시각화합니다.
+    (network, channel prefix는 data에서 자동으로 가져옴)
 
     Parameters
     ----------
@@ -764,13 +764,13 @@ def plot_picking(
         miss = required - set(data.columns)
         raise ValueError(f"data에 필요한 열이 없습니다: {sorted(miss)}")
 
-    # 1) 해당 관측소만 필터
+    # 1) 대상 관측소만 필터
     filtered = data.loc[data["station"] == station].copy()
     if filtered.empty:
         print(f"[warn] station='{station}' 에 해당하는 행이 없습니다.")
         return
 
-    # 2) 해당 관측소의 스트림 구성(효율상 부분집합만 넘김)
+    # 2) 스트림 구성
     try:
         st = _extractStream(filtered)
     except Exception as e:
@@ -790,37 +790,78 @@ def plot_picking(
         .drop_duplicates()
         .reset_index(drop=True)
     )
-
     if scnl_df.empty:
         print("[warn] 선택된 관측소에서 유효한 SCNL이 없습니다.")
         return
 
-    # 5) 관측소 내 모든 (network, channel) 조합에 대해 예측 + 플롯
+    # 5) 관측소 내 모든 (network, channel) 조합에 대해 예측 + 즉시 플롯
     for _, r in scnl_df.iterrows():
         net = str(r["network"])
         sta = str(r["station"])
-        cha = str(r["channel"])   # 채널 'HG','HH' 등 prefix 가정
+        cha = str(r["channel"])   # 'HG','HH' 등 prefix 가정
 
         try:
-            # 모델 적용
+            # 5-1) 모델 예측 (E/N/Z 파형, 확률시퀀스, 시작시각)
             enz_array, Y_med, startT = _pick_single(
                 st.copy(), net, sta, cha,
                 twin=twin, stride=stride, model=model
             )
 
-            # 샘플링 주파수 (절대시각 축 표시에 사용, 없으면 샘플 인덱스)
+            # 5-2) 샘플링레이트(절대시간축 표시에 사용)
             sel = st.select(network=net, station=sta, channel=f"{cha}*")
             fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
 
-            try:
-                _plot_results(net, sta, cha, enz_array, Y_med, starttime=startT, fs=fs)
-            except Exception as pe:
-                if verbose:
-                    print(f"[plot warning] {net}.{sta}.{cha}: {pe} -> 기본 모드로 재시도")
-                _plot_results(net, sta, cha, enz_array, Y_med)
+            # 5-3) 플로팅(결합형)
+            npts = enz_array.shape[0]
+            if startT is not None and fs is not None:
+                dt = 1.0 / fs
+                times = [(startT + j * dt).datetime for j in range(npts)]
+                xfmt = mdates.DateFormatter('%H:%M:%S')
+                is_time = True
+            else:
+                times = np.arange(npts)
+                xfmt = None
+                is_time = False
+
+            fig = plt.figure(figsize=(7, 5))
+            ax1 = fig.add_subplot(4, 1, 1)
+            ax2 = fig.add_subplot(4, 1, 2)
+            ax3 = fig.add_subplot(4, 1, 3)
+            ax4 = fig.add_subplot(4, 1, 4)
+
+            ax1.plot(times, enz_array[:, 0], "k", label="E")
+            ax2.plot(times, enz_array[:, 1], "k", label="N")
+            ax3.plot(times, enz_array[:, 2], "k", label="Z")
+            ax1.set_xticks([]); ax2.set_xticks([]); ax3.set_xticks([])
+
+            ax4.plot(times, Y_med[:, 0], label="P", zorder=10)
+            ax4.plot(times, Y_med[:, 1], label="S", zorder=10)
+            ax4.plot(times, Y_med[:, 2], label="Noise")
+
+            ax1.legend(loc="upper right")
+            ax2.legend(loc="upper right")
+            ax3.legend(loc="upper right")
+            ax4.legend(loc="upper right", ncol=3)
+
+            if is_time:
+                ax4.xaxis.set_major_formatter(xfmt)
+                ax4.set_xlabel("Time (UTC)")
+            else:
+                ax4.set_xlabel("Sample Index")
+
+            ax1.set_ylabel("Count")
+            ax2.set_ylabel("Count")
+            ax3.set_ylabel("Count")
+            ax4.set_ylabel("Probability")
+
+            plt.suptitle(f"{net}.{sta}..{cha}")
+            plt.tight_layout()
+            plt.show()
 
         except Exception as e:
-            print(f"[pick warning] {net}.{sta}.{cha}: {e}")
+            print(f"[pick/plot warning] {net}.{sta}.{cha}: {e}")
+            if verbose:
+                import traceback; traceback.print_exc()
             continue
 
 
