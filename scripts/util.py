@@ -24,7 +24,7 @@ __author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
 
-def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
+def read_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
     관측소 정보(SCN), 위경도 좌표, 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
 
@@ -34,21 +34,21 @@ def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
         입력 pickle 파일 경로. 파일에는 최소한 다음 열이 포함되어야 함:
         network, station, channel, latitude, longitude, elevation, starttime, endtime, data
     verbose : bool, default=True
-        True일 경우, 불러온 데이터의 정보를 출력합니다. False이면 DataFrame만 반환합니다.
+        True일 경우, 불러온 자료의 정보를 출력합니다. False일 시 DataFrame만 반환합니다.
 
     Returns
     -------
     data : pandas.DataFrame
-        불러온 관측소 & 지진파형 데이터
+        불러온 관측소 & 지진파형 자료
     """
     with open(pkl_path, "rb") as f:
         data: pd.DataFrame = pickle.load(f)
 
     if verbose:
-        print("자료를 불러옵니다...")
+        print("지진파 자료를 불러옵니다...")
         print("=" * 80)
         for _, row in data.iterrows():
-            print("관측소: {net:<2}.{sta:<5} | 채널: {cha:<3} | 기간(UTC): {start} ~ {end}".format(
+            print("관측소: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
                 net=row["network"],
                 sta=row["station"],
                 cha=row["channel"],
@@ -61,159 +61,64 @@ def load_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
     return data
 
 
-def plot_data(
-    data: pd.DataFrame,
-    network: str,
-    station: str,
-    channel: str,
-    picking: bool = False,
-    model: str = 'KFpicker_20230217.h5',
-    twin: int = 3000,
-    stride: int = 3000,
-    verbose: bool = True,
-) -> None:
+def plot_data(data: pd.DataFrame, station: str) -> None:
     """
-    입력 조건(네트워크/관측소/채널 접두사)에 맞는 파형을 시각화합니다.
-    - 기본: 단일 관측소의 3성분 파형을 시간축(UTC) 기준으로 플로팅
-    - picking=True: 필터링된 SCNL 모두에 대해 pick_single() 수행 후 plot_results() 호출
+    조건에 맞는 지진파 자료를 시각화합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        지진파 데이터가 담긴 DataFrame.
-        최소 열: 'network', 'station', 'channel', 'data' (data는 ObsPy Stream)
-    network : str
-        네트워크명.
+        지진파 자료가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
+        station, data
     station : str
         관측소명.
-    channel : str
-        채널명 접두사 (예: 'HG', 'HH').
-    picking : bool, optional
-        True이면 SCNL 전량에 대해 위상 픽킹 및 결과 플롯을 수행. 기본 False.
-    model : Any, optional
-        픽킹에 사용할 학습 모델(예: KFpicker 등). picking=True일 때 필요.
-    twin : float, optional
-        pick_single 윈도 길이(초).
-    stride : float, optional
-        pick_single 슬라이드 간격(초).
-    verbose : bool, optional
-        진행 로그 출력 여부.
-
-    Notes
-    -----
-    - pick_single(), plot_results(), extract_stream()은 외부에서 제공된다고 가정.
-    - picking=True일 때는 개별 SCNL 단위 결과 플롯(plot_results)을 수행.
-    - 기본 플롯(3성분 파형)은 첫 번째 일치 row의 Stream을 사용.
     """
-    # 0) 모델 로드
-    model = tf.keras.models.load_model(model, compile=False)
-
-    # 1) 조건에 맞는 데이터 필터링
-    filtered = data[
-        (data["network"] == network)
-        & (data["station"] == station)
-        & (data["channel"].str.startswith(channel, na=False))
-    ]
+    # 조건에 맞는 자료 필터링
+    filtered = data[data["station"] == station]
 
     if filtered.empty:
-        print(f"해당 조건의 데이터가 없습니다. (네트워크: {network}, 관측소: {station}, 채널: {channel})")
+        print(f"해당 조건의 데이터가 없습니다. (관측소: {station})")
         return
 
-    # 2) picking 모드가 아닐 때: 단일 관측소 3성분 파형 플롯
-    if not picking:
-        row = filtered.iloc[0]
-        stream = row["data"]
+    # 2) 단일 관측소 3성분 파형 플롯
+    row = filtered.iloc[0]
+    stream = row["data"]
 
-        fig = plt.figure(figsize=(7, 5))
-        for i, trace in enumerate(stream):
-            ax = fig.add_subplot(len(stream), 1, i + 1)
+    fig = plt.figure(figsize=(7, 5))
+    for i, trace in enumerate(stream):
+        ax = fig.add_subplot(len(stream), 1, i + 1)
 
-            n = trace.stats.npts
-            dt = trace.stats.delta
-            t0 = trace.stats.starttime
-            time_vector = [(t0 + j * dt).datetime for j in range(n)]
+        n = trace.stats.npts
+        dt = trace.stats.delta
+        t0 = trace.stats.starttime
+        time_vector = [(t0 + j * dt).datetime for j in range(n)]
 
-            ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
-            ax.set_ylabel("Count")
-            ax.legend(loc="upper right")
+        ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
+        ax.set_ylabel("Count")
+        ax.legend(loc="upper right")
 
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-            if i < len(stream) - 1:
-                ax.set_xticks([])
-            else:
-                ax.set_xlabel("Time (UTC)")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+        if i < len(stream) - 1:
+            ax.set_xticks([])
+        else:
+            ax.set_xlabel("Time (UTC)")
 
-        plt.suptitle(f"{network}.{station}..{channel}")
-        plt.tight_layout()
-        plt.show()
-        return
+    plt.suptitle(f"{station} station")
+    plt.tight_layout()
+    plt.show()
+    return
 
-    # 3) picking 모드: SCNL 전량에 대해 pick_single → plot_results
-    #    extract_stream은 data 전체에서 Stream을 하나로 합친다고 가정
-    try:
-        st = extract_stream(data)  # 외부 제공 함수
-    except Exception as e:
-        print(f"[error] extract_stream 실패: {e}")
-        return
-
-    scnl_df = filtered.loc[:, ["network", "station", "channel"]].copy()
-
-    if scnl_df.empty:
-        print("[warn] picking=True 이지만 조건에 맞는 SCNL이 없습니다.")
-        return
-
-    for _, r in scnl_df.iterrows():
-        net, sta, cha = r.network, r.station, r.channel
-        try:
-            # 모델 적용 및 결과 산출
-            enz_array, Y_med, startT = pick_single(
-                st.copy(),
-                net,
-                sta,
-                cha,
-                twin=twin,
-                stride=stride,
-                model=model,
-            )
-
-            # Fs 추출 (없으면 None)
-            sel = st.select(network=net, station=sta, channel=f"{cha}*")
-            fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
-
-            # 결과 플롯
-            try:
-                plot_results(
-                    net,
-                    sta,
-                    cha,
-                    enz_array,
-                    Y_med,
-                    starttime=startT,
-                    fs=fs,
-                )
-            except Exception as pe:
-                # plot 실패 시, 최소한 기본 인자만으로 재시도
-                if verbose:
-                    print(f"[plot warning] {net}.{sta}.{cha}: {pe}")
-                plot_results(net, sta, cha, enz_array, Y_med)
-
-        except Exception as e:
-            print(f"[pick warning] {net}.{sta}.{cha}: {e}")
-    
-
-def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html", zoom_start: int = 10, show_station_labels: bool = True) -> folium.Map:
+def plot_station(data: pd.DataFrame, center: Optional[tuple[float, float]] = None, zoom_start: int = 10, show_station_labels: bool = True):
     """
-    관측소 정보를 Folium 지도에 표시 및 HTML 파일로 저장합니다.
+    관측소 정보를 Folium 지도에 표시합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        관측소 정보를 포함한 DataFrame. 다음 열이 포함되어야 합니다.
+        관측소 정보가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
         network, station, latitude, longitude
     center : tuple of float, optional
         지도 중심 좌표 (위도, 경도). 지정하지 않으면 관측소들의 위도/경도 중앙값으로 설정됩니다.
-    html_out : str, default="map.html"
-        저장할 HTML 파일 이름.
     zoom_start : int, default=10
         지도 초기 Zoom level.
     show_station_labels : bool, default=True
@@ -227,7 +132,7 @@ def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html"
     else:
         center = (float(center[0]), float(center[1]))
 
-    # Folium 지도 객체 (m) 생성
+    # Folium 지도 객체 생성
     m = folium.Map(
         width=900, height=900, location=center, zoom_start=zoom_start, control_scale=True,
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -241,7 +146,6 @@ def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html"
         lat, lon = float(row["latitude"]), float(row["longitude"])
         tip = (
             f"Station: {row['station']}<br/>"
-            f"Network: {row['network']}<br/>"
             f"Location: {lat:.4f}, {lon:.4f}"
         )
         folium.features.RegularPolygonMarker(
@@ -273,47 +177,48 @@ def plot_station(data: pd.DataFrame, center=None, html_out: str = "station.html"
         force_separate_button=True
     ).add_to(m)
 
-    m.save(html_out)
     display(m)
 
 
 ## ====== picking ====== 
-def extract_stream(data: pd.DataFrame) -> Stream:
+def _extractStream(data: pd.DataFrame) -> Stream:
     """
     DataFrame의 'data' 열에서 ObsPy Stream 객체들을 모아 하나의 Stream으로 합칩니다.
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        'data' 열을 포함한 DataFrame. 각 원소는 ObsPy `Stream` 이어야 합니다.
+    data : pandas.DataFrame
+        지진파 자료가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
+        data
 
     Returns
     -------
     obspy.core.stream.Stream
-        입력된 모든 `Stream`의 트레이스를 합친 단일 `Stream`.
+        data 내 모든 Stream 객체를 합친 단일 Stream 객체.
     """
-    st= Stream()
+    st = Stream()
     for obj in data["data"]:
         if obj is None:
             continue
         if isinstance(obj, Stream):
             st.extend(obj)
+
     return st
 
 
-def getArray(stream : Stream, network : str, station : str, channel : str) -> Tuple[NDArray[np.floating[Any]], UTCDateTime]:
+def _getArray(stream : Stream, network : str, station : str, channel : str) -> tuple[np.ndarray, UTCDateTime]:
     """
-    특정 (network, station, channel)에 해당하는 3성분 데이터를 추출/전처리합니다.
+    특정 (network, station, channel)에 해당하는 3성분 자료를 추출/전처리합니다.
 
     Notes
     -----
     select → detrend → (필요 시) resample(100 Hz) → merge →
-    bandpass(2–40 Hz) → 공통 구간으로 trim.
+    bandpass(2–40 Hz) filtering → 공통 구간으로 trim.
 
     Parameters
     ----------
-    stream : obspy.Stream
-        원본 Stream.
+    stream : Stream
+        _extract_stream() 실행 결과 Stream 객체.
     network : str
         네트워크명.
     station : str
@@ -324,7 +229,7 @@ def getArray(stream : Stream, network : str, station : str, channel : str) -> Tu
     Returns
     -------
     data : np.ndarray
-        shape (npts, 3). 열 순서는 탐지된 component 순서대로 채워짐.
+        shape (npts, 3). 열 순서는 탐지된 성 순서대로 채워집니다.
     starttime : obspy.UTCDateTime
         trim 후 데이터의 시작 시각.
     """
@@ -333,16 +238,15 @@ def getArray(stream : Stream, network : str, station : str, channel : str) -> Tu
     # detrend 수행
     sub_stream = sub_stream.detrend("constant")
 
-    # Stream이 100samples 아닐 시, resampling 수행 후 병합
+    # stream이 100samples 아닐 시, resampling 수행 후 병합
     if any(tr.stats.sampling_rate != 100.0 for tr in sub_stream):
         sub_stream.resample(100.0)
     sub_stream = sub_stream.merge(fill_value=0)
 
-    # Bandpass filter 적용
+    # bandpass filter 적용
     sub_stream.filter("bandpass", freqmin=2.0, freqmax=40.0)
 
-    # 모든 Trace의 공통구간으로 Trimming 수행
-    # reference from PhaseNet
+    # 모든 Trace의 공통구간으로 Trimming 수행(reference from PhaseNet)
     sub_stream = sub_stream.trim(
         min(tr.stats.starttime for tr in sub_stream),
         max(tr.stats.endtime for tr in sub_stream),
@@ -367,7 +271,8 @@ def getArray(stream : Stream, network : str, station : str, channel : str) -> Tu
     return enz_array, sub_stream[0].stats.starttime
 
 
-def getSegment(enz_array: NDArray[np.floating[Any]], network: str, station: str, channel: str, starttime: UTCDateTime, twin: int = 3000, tshift: int = 500) -> Tuple[NDArray[np.floating[Any]], List[tuple[str, str, str, UTCDateTime, int]]]:
+def _getSegment(enz_array: NDArray[np.floating[Any]], network: str, station: str, channel: str, 
+                starttime: UTCDateTime, twin: int = 3000, tshift: int = 500) -> Tuple[NDArray[np.floating[Any]], List[tuple[str, str, str, UTCDateTime, int]]]:
     """
     3성분 지진파 시계열을 일정한 길이(`twin`)로 잘라 겹치는(`tshift`) 작은 시간창으로 나눕니다.
 
@@ -393,77 +298,78 @@ def getSegment(enz_array: NDArray[np.floating[Any]], network: str, station: str,
     window_stack : np.ndarray
         shape (noverlap, tot_num, twin, 3).
         - noverlap: 하나의 시간창 안에서 만들 수 있는 겹침 개수 (twin / tshift).
-        - tot_num: 전체 데이터에서 잘라낸 시간창 개수.
+        - tot_num: 전체 자료에서 잘라낸 시간창 개수.
         - 각 원소는 (시간창 길이, 3성분) 파형 조각.
-    window_meta : list[list]
-        [station, channel, network, 해당 시간창의 시작 시각, twin(시간창 길이)] 형식.
-        (첫 번째 오프셋에서만 저장하므로 길이는 tot_num과 같음)
     """
-    # 총 샘플 수(npts)와 전체 시간창 개수 계산
+    # 총 샘플 수와 자를 수 있는 시간창 개수 계산
     tot_len = enz_array.shape[0]
-    tot_num = int(np.ceil(tot_len / twin))
-    noverlap = int(twin / tshift)
+    tot_num = int(np.ceil(tot_len / twin))  # 전체 자료에서 twin 크기로 나눌 수 있는 구간 수
+    noverlap = int(twin / tshift)           # 한 구간 안에서 만들 수 있는 offset(겹침) 개수
 
     # 결과 배열 초기화 (모자라는 부분은 0으로 채워짐)
     window_stack = np.zeros((noverlap, tot_num, twin, 3))
-    window_meta = []
 
-    # i: 시간창 안에서의 오프셋 위치
-    # j: 전체 데이터에서의 시간창 번호
+    # i: 시간창 안에서의 시작 위치
+    # j: 전체 자료에서 잘라낸 시간 번호
     for i in range(noverlap):
         for j in range(tot_num):
-            start = j * twin + i * tshift
-            end = start + twin
+            start = j * twin + i * tshift # 잘라낼 구간의 시작 지점(샘플 단위)
+            end = start + twin            # 잘라낼 구간의 끝 지점(샘플 단위)
 
             # 전체 길이를 넘으면 중단
             if start >= tot_len:
                 continue
 
-            # 끝 인덱스를 배열 범위 내로 클리핑하고 실제 세그먼트 길이 계산
+            # 끝 위치가 자료 끝을 넘지 않도록 조정
             end_clipped = min(end, tot_len)
             seg_len = end_clipped - start
 
+            # 잘라낸 구간을 window_stack에 채워 넣음
             if seg_len > 0:
                 window_stack[i, j, :seg_len, :] = enz_array[start:end_clipped, :]
-            if i == 0:
-                window_meta.append([station, channel, network, starttime + (start / 100.0), twin])
 
-    return window_stack, window_meta
+    return window_stack
 
 
-def normalize(data: np.ndarray, axis=(1,)) -> np.ndarray:
+def _normalize(data: np.ndarray, axis: tuple[int, ...] = (1,)) -> np.ndarray:
     """
     배열을 평균 0, 표준편차 1이 되도록 정규화합니다.
 
     Parameters
     ----------
     data : np.ndarray
-        (n_window, twin, n_channel) 또는 (nstn, twin, n_channel) 형태.
+        (n_window, twin, n_channel) 또는 (nstn, twin, n_channel) 형태의 배.
     axis : tuple[int], optional
         평균/표준편차를 계산할 축. 기본값 (1,)은 시간축 twin에 대해 정규화.
 
     Returns
     -------
     np.ndarray
-        정규화된 같은 shape의 배열(원본과 동일 객체).
+        정규화된 배열. 입력과 같은 shape이며, 원본 배열이 수정되어 반환됩니다.
     """
     data -= np.mean(data, axis=axis, keepdims=True)
     std_data = np.std(data, axis=axis, keepdims=True)
     std_data[std_data == 0] = 1
     data /= std_data
+
     return data
 
 
-def pick_single(stream, network, station, channel, twin, stride, model):
+def _pick_single(stream: Stream, network: str, station: str, channel: str, 
+                 twin: int, stride: int, model: object) -> Tuple[NDArray[np.floating], NDArray[np.floating], UTCDateTime]:
     """
     단일 관측소 파형에 대해 모델을 이용해 위상 도착 확률을 계산합니다.
 
     Parameters
     ----------
-    net, stn, chn : str
-        네트워크명/관측소명/채널명.
-    st : obspy.Stream
-        원본 Stream.
+    stream : Stream
+        _extract_stream() 실행 결과 Stream 객체.
+    network : str
+        네트워크명.
+    station : str
+        관측소명.
+    channel : str
+        채널명 접두사 (예: 'HG', 'HH').
     twin : int
         시간창 길이(샘플).
     stride : int
@@ -473,18 +379,23 @@ def pick_single(stream, network, station, channel, twin, stride, model):
 
     Returns
     -------
-    data : np.ndarray
-    Y_med : np.ndarray
-    startT : obspy.UTCDateTime
+    enz_array : np.ndarray of shape (npts, 3)
+        입력 파형의 E/N/Z 성분 배열.
+    Y_med : np.ndarray of shape (npts, 3)
+        슬라이딩 윈도우 앙상블 결과의 위상 도착 확률.
+    starttime : obspy.UTCDateTime
+        데이터 시작 시각.
     """
     # 지진파형 배열과 시작시각 가져오기
-    enz_array, starttime = getArray(stream.copy(), network, station, channel)
+    enz_array, starttime = _getArray(stream.copy(), network, station, channel)
+
     # 슬라이딩 윈도우로 자르기
-    window_stack, window_meta = getSegment(enz_array, network, station, channel, starttime, twin=twin, tshift=stride)
-    # 각각의 시간창에 대해 예측하기
+    window_stack = _getSegment(enz_array, network, station, channel, starttime, twin=twin, tshift=stride)
+
+    # 각 시간창에 대해 모델을 적용하여 위상 도착 확률 예측
     Y_result = np.zeros_like(window_stack)
     for i in range(window_stack.shape[0]):
-        X_test = normalize(window_stack[i])
+        X_test = _normalize(window_stack[i])
         Y_pred = model.predict(X_test, verbose=0)
         #Y_pred = model(X_test)
         Y_result[i] = Y_pred
@@ -493,10 +404,13 @@ def pick_single(stream, network, station, channel, twin, stride, model):
     y1, y2, y3, y4 = Y_result.shape
     Y_result2 = np.zeros((y1, y2 * y3, y4))
     Y_result2[:, :, 2] = 1
+
+    # 잘라낸 구간 예측을 원래 시간축에 맞게 정렬해서 합치기
     for i in range(y1):
         Y_tmp = np.copy(Y_result[i]).reshape(y2 * y3, y4)
         Y_result2[i, i * stride :, :] = Y_tmp[: (Y_tmp.shape[0] - i * stride), :]
 
+    # 여러 구간 결과를 중앙값으로 합쳐 최종 확률 시계열 생성
     Y_med = np.median(Y_result2, axis=0).reshape(y2, y3, y4)
     y1, y2, y3 = Y_med.shape
     Y_med = Y_med.reshape(y1 * y2, y3)
@@ -504,60 +418,7 @@ def pick_single(stream, network, station, channel, twin, stride, model):
     return enz_array, Y_med, starttime
 
 
-def plot_results(net, stn, chn, data_total, Y_total, starttime=None, fs=None):
-    """
-    3성분 파형과 클래스 확률(P/S/Noise)을 한 Figure에 시각화합니다.
-
-    Parameters
-    ----------
-    net, stn, chn : str
-        네트워크/관측소/채널 prefix.
-    data_total : np.ndarray
-        shape (npts, 3). 열 순서를 E/N/Z로 가정해 plotting.
-    Y_total : np.ndarray
-        shape (npts, 3). 열 순서 [P, S, Noise] 확률.
-    """
-    npts = data_total.shape[0]
-    if starttime is not None and fs is not None:
-        dt = 1.0 / fs
-        times = [(starttime + j * dt).datetime for j in range(npts)]
-    else:
-        times = np.arange(npts)
-
-    fig = plt.figure(figsize=(7, 5))
-    ax1 = fig.add_subplot(4, 1, 1)
-    ax2 = fig.add_subplot(4, 1, 2)
-    ax3 = fig.add_subplot(4, 1, 3)
-    ax4 = fig.add_subplot(4, 1, 4)
-    ax1.plot(times, data_total[:, 0], "k", label="E")
-    ax2.plot(times, data_total[:, 1], "k", label="N")
-    ax3.plot(times, data_total[:, 2], "k", label="Z")
-
-    ax1.set_xticks([])
-    ax2.set_xticks([])
-    ax3.set_xticks([])
-
-    ax4.plot(times, Y_total[:, 0], color="b", label="P", zorder=10)
-    ax4.plot(times, Y_total[:, 1], color="r", label="S", zorder=10)
-    ax4.plot(times, Y_total[:, 2], color="gray", label="Noise")
-
-    ax1.legend(loc="upper right")
-    ax2.legend(loc="upper right")
-    ax3.legend(loc="upper right")
-    ax4.legend(loc="upper right", ncol=3)
-
-    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-    ax1.set_ylabel("Count")
-    ax2.set_ylabel("Count")
-    ax3.set_ylabel("Count")
-    ax4.set_xlabel("Time (UTC)")
-    ax4.set_ylabel("Probability")
-
-    plt.suptitle(f"{net}.{stn}..{chn}")
-    plt.show()
-
-    
-def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
+def _get_picks(Y_total: NDArray[np.floating], network: str, station: str, channel: str, starttime: UTCDateTime, sr: float = 100.0) -> List[list]:
     """
     확률 시퀀스에서 P/S 피크를 검출해 도달시각 리스트를 생성합니다.
 
@@ -565,9 +426,13 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
     ----------
     Y_total : np.ndarray
         shape (npts, 3). [P, S, Noise] 확률.
-    net, stn, chn : str
-        네트워크/관측소/채널 prefix.
-    sttime : obspy.UTCDateTime
+    network : str
+        네트워크명.
+    station : str
+        관측소명.
+    channel : str
+        채널명 접두사 (예: 'HG', 'HH').
+    starttime : UTCDateTime
         데이터 시작 UTC 시각.
     sr : float, optional
         샘플링 주파수(Hz). 기본값 100.0.
@@ -578,14 +443,17 @@ def get_picks(Y_total, net, stn, chn, sttime, sr=100.0):
         각 원소 = [net, stn, chn, arrival_time(UTCDateTime), confidence, phase('P'|'S')]
     """
     arr_lst = []
+
     P_idx, P_prob = detect_peaks(Y_total[:, 0], mph=0.3, mpd=50, show=False)
     S_idx, S_prob = detect_peaks(Y_total[:, 1], mph=0.3, mpd=50, show=False)
+
     for idx_, p_idx in enumerate(P_idx):
-        p_arr = sttime + (p_idx / sr)
-        arr_lst.append([net, stn, chn, p_arr, P_prob[idx_], "P"])
+        p_arr = starttime + (p_idx / sr)
+        arr_lst.append([network, station, channel, p_arr, P_prob[idx_], "P"])
     for idx_, s_idx in enumerate(S_idx):
-        s_arr = sttime + (s_idx / sr)
-        arr_lst.append([net, stn, chn, s_arr, S_prob[idx_], "S"])
+        s_arr = starttime + (s_idx / sr)
+        arr_lst.append([network, station, channel, s_arr, S_prob[idx_], "S"])
+
     return arr_lst
 
 
@@ -607,13 +475,17 @@ def picking(
     data : pandas.DataFrame
         'network', 'station', 'channel', 'data'(ObsPy Stream) 열을 포함해야 합니다.
     model : Any
-        KFpicker 등 예측에 사용할 모델 객체( predict(X) 메서드 보유 ).
+        KFpicker 등 예측에 사용할 모델 객체.
     twin : int, default 3000
-        Window 길이(샘플).
+        시간창 길이(샘플).
     stride : int, default 3000
-        Window 간격(샘플).
+        시간창 간격(샘플).
     verbose : bool, default True
         True이면 진행 상황 및 결과 요약을 출력.
+    vp : float, default np.mean([5.63, 6.17])
+        P파 평균 속도 (km/s). 초기 진원시(origin time) 계산에 사용됩니다.
+    vs : float, default np.mean([3.39, 3.61])
+        S파 평균 속도 (km/s). 초기 진원시(origin time) 계산에 사용됩니다.
 
     Returns
     -------
@@ -622,33 +494,32 @@ def picking(
         columns = ['network','station','channel','arrival','prob','phase'].
     """
     # 모델 불러오기
-    model = tf.keras.models.load_model('KFpicker_20230217.h5', compile=False)
+    model = tf.keras.models.load_model(model, compile=False)
 
-    # 전체 Stream 구성 (사용자 정의 함수)
-    st = extract_stream(data)
+    # 전체 Stream 구성
+    st = _extractStream(data)
 
     scnl_df = data.loc[:, ['network', 'station', 'channel']].copy()
     Y_buf: list[np.ndarray] = []
     startT_buf: list = []
 
-    # ===== 예측 루프 =====
+    # 인공지능 모델 피킹 수행
     for _, row in scnl_df.iterrows():
         network, station, channel = row.network, row.station, row.channel
 
-        enz_array, Y_med, startT = pick_single(
+        enz_array, Y_med, startT = _pick_single(
             st.copy(), network, station, channel,
             twin=twin, stride=stride, model=model
         )
         Y_buf.append(Y_med)
         startT_buf.append(startT)
 
-    # ===== start_time 기록 =====
     scnl_df["start_time"] = startT_buf
 
-    # ===== 픽 테이블 생성 =====
+    # 피크 테이블 생성
     picks_total_list = []
     for idx, row in scnl_df.iterrows():
-        arr_lst = get_picks(
+        arr_lst = _get_picks(
             Y_buf[idx], row.network, row.station, row.channel, row.start_time
         )
         if arr_lst:
@@ -666,47 +537,58 @@ def picking(
         )
 
     origin_time = _calc_origintime(picks_total, vp, vs)
-
     data_rel = build_relative_dataset(picks_total, data, origin_time)
-        
-    # ===== verbose 출력 (실제 픽 결과 기반) =====
+
     if verbose:
         print("인공지능 모델을 이용하여 지진파의 도달시각을 결정합니다...")
         print("=" * 80)
         if picks_total.empty:
             print("유효한 지진파 도달시각이 없습니다.")
         else:
-            for _, r in picks_total.iterrows():
-                net = f"{str(r['network']):<2}"
-                sta = f"{str(r['station']):<5}"
-                cha = f"{str(r['channel']):<3}"
-                phase = str(r['phase']).upper()
+            # P/S를 관측소별로 한 줄에 묶기
+            pivot_df = picks_total.pivot_table(
+                index=["network", "station", "channel"],
+                columns="phase",
+                values=["arrival", "prob"],
+                aggfunc="first"
+            )
 
-                # 도달시각: 밀리초까지 표시 (YYYY-mm-dd HH:MM:SS.sss)
-                arr_dt = str(r['arrival'])
-                arr_dt = pd.to_datetime(arr_dt)
-                arr_dt = arr_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            pivot_df.columns = [f"{col[0]}_{col[1]}" for col in pivot_df.columns]
+            pivot_df = pivot_df.reset_index()
 
+            for _, r in pivot_df.iterrows():
+                net = f"{r['network']:<2}"
+                sta = f"{r['station']:<5}"
+                cha = f"{r['channel']:<3}"
 
-                # 확률: 퍼센트(0~100)로 2자리 소수
-                if pd.notna(r['prob']):
-                    prob_pct = float(r['prob']) * 100.0
-                    prob_str = f"{prob_pct:.2f}%"
+                # P파
+                if pd.notna(r["arrival_P"]):
+                    p_arr = pd.to_datetime(str(r["arrival_P"]))
+                    p_arr_str = p_arr.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    p_prob_str = f"{float(r['prob_P']) * 100:.2f}%"
                 else:
-                    prob_str = "nan"
+                    p_arr_str, p_prob_str = "-", "-"
+
+                # S파
+                if pd.notna(r["arrival_S"]):
+                    s_arr = pd.to_datetime(str(r["arrival_S"]))
+                    s_arr_str = s_arr.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    s_prob_str = f"{float(r['prob_S']) * 100:.2f}%"
+                else:
+                    s_arr_str, s_prob_str = "-", "-"
 
                 print(
-                    f"관측소: {net}.{sta} | 채널: {cha} | "
-                    f"{phase}파 도달시각(UTC): {arr_dt} | 예측 확률: {prob_str}"
+                    f"관측소: {sta} | "
+                    f"P파 도달시각: {p_arr_str} (확률 {p_prob_str}) | "
+                    f"S파 도달시각: {s_arr_str} (확률 {s_prob_str})"
                 )
                 time.sleep(0.1)
+
         print("=" * 80)
         print(f"총 {len(data)}개의 관측소에서 {len(picks_total)}건의 지진파 도달시각을 결정했습니다.")
 
     return data_rel
 
-
-## ====== Calculate hypocenter and origin time ====== 
 def _calc_origintime(picks_total, vp, vs):
     # Extract P and S arrival times for each station
     picks_by_station = {}
@@ -848,6 +730,101 @@ def build_relative_dataset(
     return data_rel
 
 
+def plot_picking(
+    data: pd.DataFrame,
+    station: str,
+    model_path: str = "KFpicker_20230217.h5",
+    twin: int = 3000,
+    stride: int = 3000,
+    verbose: bool = True,
+) -> None:
+    """
+    주어진 DataFrame에서 특정 station만 골라
+    인공지능 픽킹(_pick_single) 후 결과를 플로팅(_plot_results)합니다.
+    (network, channel prefix는 data에서 자동으로 가져옵니다)
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        'network','station','channel','data'(ObsPy Stream) 열 포함
+    station : str
+        대상 관측소명
+    model_path : str, default 'KFpicker_20230217.h5'
+        Keras 모델 경로(h5 등)
+    twin : int, default 3000
+        윈도우 길이(샘플)
+    stride : int, default 3000
+        윈도우 이동(샘플)
+    verbose : bool, default True
+        로그 출력 여부
+    """
+    # 0) 컬럼 체크
+    required = {"network","station","channel","data"}
+    if not required.issubset(set(data.columns)):
+        miss = required - set(data.columns)
+        raise ValueError(f"data에 필요한 열이 없습니다: {sorted(miss)}")
+
+    # 1) 해당 관측소만 필터
+    filtered = data.loc[data["station"] == station].copy()
+    if filtered.empty:
+        print(f"[warn] station='{station}' 에 해당하는 행이 없습니다.")
+        return
+
+    # 2) 해당 관측소의 스트림 구성(효율상 부분집합만 넘김)
+    try:
+        st = _extractStream(filtered)
+    except Exception as e:
+        print(f"[error] _extractStream 실패: {e}")
+        return
+
+    # 3) 모델 로드
+    try:
+        model = tf.keras.models.load_model(model_path, compile=False)
+    except Exception as e:
+        print(f"[error] 모델 로드 실패({model_path}): {e}")
+        return
+
+    # 4) (network, channel) 조합 목록
+    scnl_df = (
+        filtered.loc[:, ["network", "station", "channel"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+
+    if scnl_df.empty:
+        print("[warn] 선택된 관측소에서 유효한 SCNL이 없습니다.")
+        return
+
+    # 5) 관측소 내 모든 (network, channel) 조합에 대해 예측 + 플롯
+    for _, r in scnl_df.iterrows():
+        net = str(r["network"])
+        sta = str(r["station"])
+        cha = str(r["channel"])   # 채널 'HG','HH' 등 prefix 가정
+
+        try:
+            # 모델 적용
+            enz_array, Y_med, startT = _pick_single(
+                st.copy(), net, sta, cha,
+                twin=twin, stride=stride, model=model
+            )
+
+            # 샘플링 주파수 (절대시각 축 표시에 사용, 없으면 샘플 인덱스)
+            sel = st.select(network=net, station=sta, channel=f"{cha}*")
+            fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
+
+            try:
+                _plot_results(net, sta, cha, enz_array, Y_med, starttime=startT, fs=fs)
+            except Exception as pe:
+                if verbose:
+                    print(f"[plot warning] {net}.{sta}.{cha}: {pe} -> 기본 모드로 재시도")
+                _plot_results(net, sta, cha, enz_array, Y_med)
+
+        except Exception as e:
+            print(f"[pick warning] {net}.{sta}.{cha}: {e}")
+            continue
+
+
+## ====== Calculate hypocenter and origin time ====== 
 def calc_pred(mp, vp, vs, data):
     """
     주어진 진원 파라미터와 속도 모델을 기반으로 각 관측소의
