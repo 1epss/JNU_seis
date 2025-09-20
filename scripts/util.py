@@ -854,7 +854,7 @@ def plot_picking(
             ax3.set_ylabel("Count")
             ax4.set_ylabel("Probability")
 
-            plt.suptitle(f"{net}.{sta}..{cha}")
+            plt.suptitle(f"{sta} station")
             plt.tight_layout()
             plt.show()
 
@@ -1252,9 +1252,20 @@ def plot_hypocenter(
     if missing:
         raise ValueError(f"필수 컬럼 누락: {sorted(missing)}")
 
+    # 진원 설정
+    if show_hypocenter:
+        if result_df is None:
+            raise ValueError("show_hypocenter=True 이면 result_df가 필요합니다.")
+        east_km = float(result_df.iloc[-1]["X"])
+        north_km = float(result_df.iloc[-1]["Y"])
+
+        # 외부 함수: X=east_km, Y=north_km -> (lat, lon)
+        hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
+        hypo = (hypo_lat, hypo_lon)
+        
     # 중심점 결정
     if center is None:
-        center = (float(np.median(data['latitude'])), float(np.median(data['longitude'])))
+        center = hypo
     else:
         center = (float(center[0]), float(center[1]))
 
@@ -1280,20 +1291,8 @@ def plot_hypocenter(
                 icon=DivIcon(icon_size=(0, 0), icon_anchor=(0, -20),
                              html=f'<div style="font-size: 8pt; color: white;">{row['station']}</div>')
             ).add_to(m)
-
-    hypo = None
-
+            
     # 진원 마커
-    if show_hypocenter:
-        if result_df is None:
-            raise ValueError("show_hypocenter=True 이면 result_df가 필요합니다.")
-        east_km = float(result_df.iloc[-1]["X"])
-        north_km = float(result_df.iloc[-1]["Y"])
-
-        # 외부 함수: X=east_km, Y=north_km -> (lat, lon)
-        hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
-        hypo = (hypo_lat, hypo_lon)
-
         folium.Marker(
             location=[hypo_lat, hypo_lon],
             icon=folium.Icon(color="red", icon="star", prefix="fa"),
@@ -1303,7 +1302,7 @@ def plot_hypocenter(
     # 반경 원/라벨
     if show_rings:
         for rk in rings_km:
-            folium.Circle(location=hypo, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
+            folium.Circle(location=center, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
 
         if show_ring_labels:
             lat0 = center[0]
