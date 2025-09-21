@@ -19,27 +19,27 @@ from typing import Any, Tuple, List, Optional
 
 # ====== Module metadata ======
 __title__ = "util"
-__version__ = "0.1.4"
+__version__ = "1.0.0"
 __author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
 
 def read_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
     """
-    관측소 정보(SCN), 위경도 좌표, 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
+    관측소 메타데이터와 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
 
     Parameters
     ----------
     pkl_path : str or pathlib.Path
-        입력 pickle 파일 경로. 파일에는 최소한 다음 열이 포함되어야 함:
-        network, station, channel, latitude, longitude, elevation, starttime, endtime, data
-    verbose : bool, default=True
-        True일 경우, 불러온 자료의 정보를 출력합니다. False일 시 DataFrame만 반환합니다.
+        입력 pickle 파일 경로. 최소 열: network, station, channel, latitude, longitude,
+        elevation, starttime, endtime, data.
+    verbose : bool, default True
+        불러온 자료의 요약 정보를 표준출력으로 보여줄지 여부.
 
     Returns
     -------
-    data : pandas.DataFrame
-        불러온 관측소 & 지진파형 자료
+    pandas.DataFrame
+        관측소 메타 + ObsPy Stream이 담긴 DataFrame.
     """
     with open(pkl_path, "rb") as f:
         data: pd.DataFrame = pickle.load(f)
@@ -63,15 +63,18 @@ def read_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
 
 def plot_data(data: pd.DataFrame, station: str) -> None:
     """
-    조건에 맞는 지진파 자료를 시각화합니다.
+    지정한 관측소의 3성분 파형을 시간축(UTC) 기준으로 플로팅합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        지진파 자료가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
-        station, data
+        최소 열: station, data(ObsPy Stream).
     station : str
         관측소명.
+
+    Returns
+    -------
+    None
     """
     # 조건에 맞는 자료 필터링
     filtered = data[data["station"] == station]
@@ -80,7 +83,7 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
         print(f"해당 조건의 데이터가 없습니다. (관측소: {station})")
         return
 
-    # 2) 단일 관측소 3성분 파형 플롯
+    # 단일 관측소 3성분 파형 플롯
     row = filtered.iloc[0]
     stream = row["data"]
 
@@ -110,19 +113,22 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
 
 def plot_station(data: pd.DataFrame, center: Optional[tuple[float, float]] = None, zoom_start: int = 10, show_station_labels: bool = True):
     """
-    관측소 정보를 Folium 지도에 표시합니다.
+    관측소 위치를 Folium 지도에 표시합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        관측소 정보가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
-        network, station, latitude, longitude
+        최소 열: network, station, latitude, longitude.
     center : tuple of float, optional
-        지도 중심 좌표 (위도, 경도). 지정하지 않으면 관측소들의 위도/경도 중앙값으로 설정됩니다.
-    zoom_start : int, default=10
-        지도 초기 Zoom level.
-    show_station_labels : bool, default=True
-        True이면 관측소 마커 옆에 관측소명을 텍스트 라벨로 표시합니다.
+        지도 중심 좌표(위도, 경도). None이면 관측소들의 위/경도 중앙값 사용.
+    zoom_start : int, default 10
+        초기 확대 레벨.
+    show_station_labels : bool, default True
+        관측소명 텍스트 라벨 표시 여부.
+
+    Returns
+    -------
+    None
     """
     # 지도 중심 좌표 결정
     if center is None:
@@ -183,18 +189,17 @@ def plot_station(data: pd.DataFrame, center: Optional[tuple[float, float]] = Non
 ## ====== picking ====== 
 def _extractStream(data: pd.DataFrame) -> Stream:
     """
-    DataFrame의 'data' 열에서 ObsPy Stream 객체들을 모아 하나의 Stream으로 합칩니다.
+    DataFrame의 'data' 열(ObsPy Stream들)을 하나의 Stream으로 합칩니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        지진파 자료가 담긴 DataFrame. 파일에는 최소한 다음 열이 포함되어야 함:
-        data
+        최소 열: data(ObsPy Stream).
 
     Returns
     -------
     obspy.core.stream.Stream
-        data 내 모든 Stream 객체를 합친 단일 Stream 객체.
+        병합된 단일 Stream.
     """
     st = Stream()
     for obj in data["data"]:
@@ -208,30 +213,28 @@ def _extractStream(data: pd.DataFrame) -> Stream:
 
 def _getArray(stream : Stream, network : str, station : str, channel : str) -> tuple[np.ndarray, UTCDateTime]:
     """
-    특정 (network, station, channel)에 해당하는 3성분 자료를 추출/전처리합니다.
+    (network, station, channel*)에 해당하는 3성분(E/N/Z) 파형을 추출·전처리합니다.
 
-    Notes
-    -----
-    select → detrend → (필요 시) resample(100 Hz) → merge →
-    bandpass(2–40 Hz) filtering → 공통 구간으로 trim.
+    처리 단계: select → detrend → (필요시) resample(100 Hz) → merge →
+    bandpass(2–40 Hz) → 공통 구간 trim.
 
     Parameters
     ----------
-    stream : Stream
-        _extract_stream() 실행 결과 Stream 객체.
+    stream : obspy.core.stream.Stream
+        병합된 원본 스트림.
     network : str
         네트워크명.
     station : str
         관측소명.
     channel : str
-        채널명 접두사 (예: 'HG', 'HH').
+        채널 접두사(예: 'HG', 'HH').
 
     Returns
     -------
-    data : np.ndarray
-        shape (npts, 3). 열 순서는 탐지된 성 순서대로 채워집니다.
-    starttime : obspy.UTCDateTime
-        trim 후 데이터의 시작 시각.
+    numpy.ndarray
+        shape (npts, 3). 열 순서 E, N, Z.
+    obspy.UTCDateTime
+        전처리 후 데이터 시작 시각.
     """
     sub_stream = stream.select(network = network, station = station, channel = f"{channel}?")
 
@@ -272,34 +275,31 @@ def _getArray(stream : Stream, network : str, station : str, channel : str) -> t
 
 
 def _getSegment(enz_array: NDArray[np.floating[Any]], network: str, station: str, channel: str, 
-                starttime: UTCDateTime, twin: int = 3000, tshift: int = 500) -> Tuple[NDArray[np.floating[Any]], List[tuple[str, str, str, UTCDateTime, int]]]:
+                starttime: UTCDateTime, twin: int = 3000, tshift: int = 500) -> NDArray[np.floating]:
     """
-    3성분 지진파 시계열을 일정한 길이(`twin`)로 잘라 겹치는(`tshift`) 작은 시간창으로 나눕니다.
+    3성분 파형을 길이 twin(샘플)로 자르고 tshift(샘플)만큼 이동하며 겹치는 창을 생성합니다.
 
     Parameters
     ----------
-    enz_array : np.ndarray
-        (npts, 3) 형태의 파형 데이터 (E, N, Z 3성분).
+    enz_array : numpy.ndarray
+        shape (npts, 3) 파형(E/N/Z).
     network : str
-        네트워크명.
+        네트워크명(메타 유지용).
     station : str
-        관측소명.
+        관측소명(메타 유지용).
     channel : str
-        채널명.
+        채널 접두사(메타 유지용).
     starttime : obspy.UTCDateTime
-        data의 시작 시각.
-    twin : int
-        Window 길이(샘플). 예: 3000 → 100 Hz에서 30초.
-    tshift : int
-        window 사이 shift(샘플). 예: 500 → 100 Hz에서 5초.
+        원 데이터 시작 시각(메타 유지용).
+    twin : int, default 3000
+        창 길이(샘플).
+    tshift : int, default 500
+        창 시작 지점 간 이동(샘플).
 
     Returns
     -------
-    window_stack : np.ndarray
-        shape (noverlap, tot_num, twin, 3).
-        - noverlap: 하나의 시간창 안에서 만들 수 있는 겹침 개수 (twin / tshift).
-        - tot_num: 전체 자료에서 잘라낸 시간창 개수.
-        - 각 원소는 (시간창 길이, 3성분) 파형 조각.
+    numpy.ndarray
+        shape (noverlap, nwin, twin, 3) 창 스택.
     """
     # 총 샘플 수와 자를 수 있는 시간창 개수 계산
     tot_len = enz_array.shape[0]
@@ -333,19 +333,19 @@ def _getSegment(enz_array: NDArray[np.floating[Any]], network: str, station: str
 
 def _normalize(data: np.ndarray, axis: tuple[int, ...] = (1,)) -> np.ndarray:
     """
-    배열을 평균 0, 표준편차 1이 되도록 정규화합니다.
+    배열을 평균 0, 표준편차 1 기준으로 정규화합니다(제자리 연산).
 
     Parameters
     ----------
-    data : np.ndarray
-        (n_window, twin, n_channel) 또는 (nstn, twin, n_channel) 형태의 배.
-    axis : tuple[int], optional
-        평균/표준편차를 계산할 축. 기본값 (1,)은 시간축 twin에 대해 정규화.
+    data : numpy.ndarray
+        (n_win, twin, n_chan) 형태의 배열.
+    axis : tuple of int, default (1,)
+        평균/표준편차 계산 축.
 
     Returns
     -------
-    np.ndarray
-        정규화된 배열. 입력과 같은 shape이며, 원본 배열이 수정되어 반환됩니다.
+    numpy.ndarray
+        입력과 동일 shape의 정규화된 배열(원본 수정).
     """
     data -= np.mean(data, axis=axis, keepdims=True)
     std_data = np.std(data, axis=axis, keepdims=True)
@@ -358,32 +358,32 @@ def _normalize(data: np.ndarray, axis: tuple[int, ...] = (1,)) -> np.ndarray:
 def _pick_single(stream: Stream, network: str, station: str, channel: str, 
                  twin: int, stride: int, model: object) -> Tuple[NDArray[np.floating], NDArray[np.floating], UTCDateTime]:
     """
-    단일 관측소 파형에 대해 모델을 이용해 위상 도착 확률을 계산합니다.
+    단일 관측소 3성분 파형에 대해 모델로 [P,S,Noise] 도달확률 시계열을 추정합니다.
 
     Parameters
     ----------
-    stream : Stream
-        _extract_stream() 실행 결과 Stream 객체.
+    stream : obspy.core.stream.Stream
+        병합된 원본 스트림.
     network : str
         네트워크명.
     station : str
         관측소명.
     channel : str
-        채널명 접두사 (예: 'HG', 'HH').
+        채널 접두사(예: 'HG', 'HH').
     twin : int
-        시간창 길이(샘플).
+        창 길이(샘플).
     stride : int
-        시간창 사이 shift(샘플).
-    model : callable
-        X(batch, twin, 3) -> Y(batch, twin, 3)의 예측 함수를 가진 모델
+        창 간 이동(샘플).
+    model : object
+        Keras 모델 등으로, predict(X) -> (batch, twin, 3)를 반환.
 
     Returns
     -------
-    enz_array : np.ndarray of shape (npts, 3)
-        입력 파형의 E/N/Z 성분 배열.
-    Y_med : np.ndarray of shape (npts, 3)
-        슬라이딩 윈도우 앙상블 결과의 위상 도착 확률.
-    starttime : obspy.UTCDateTime
+    numpy.ndarray
+        shape (npts, 3) E/N/Z 파형 배열.
+    numpy.ndarray
+        shape (npts, 3) [P, S, Noise] 확률의 앙상블(중앙값) 시계열.
+    obspy.UTCDateTime
         데이터 시작 시각.
     """
     # 지진파형 배열과 시작시각 가져오기
@@ -420,27 +420,27 @@ def _pick_single(stream: Stream, network: str, station: str, channel: str,
 
 def _get_picks(Y_total: NDArray[np.floating], network: str, station: str, channel: str, starttime: UTCDateTime, sr: float = 100.0) -> List[list]:
     """
-    확률 시퀀스에서 P/S 피크를 검출해 도달시각 리스트를 생성합니다.
+    [P, S, Noise] 확률 시퀀스에서 P/S 피크를 검출해 도달시각 목록을 생성합니다.
 
     Parameters
     ----------
-    Y_total : np.ndarray
-        shape (npts, 3). [P, S, Noise] 확률.
+    Y_total : numpy.ndarray
+        shape (npts, 3). 열 순서 [P, S, Noise].
     network : str
         네트워크명.
     station : str
         관측소명.
     channel : str
-        채널명 접두사 (예: 'HG', 'HH').
-    starttime : UTCDateTime
-        데이터 시작 UTC 시각.
-    sr : float, optional
-        샘플링 주파수(Hz). 기본값 100.0.
+        채널 접두사.
+    starttime : obspy.UTCDateTime
+        데이터 시작 시각.
+    sr : float, default 100.0
+        샘플링 주파수(Hz).
 
     Returns
     -------
-    list[list]
-        각 원소 = [net, stn, chn, arrival_time(UTCDateTime), confidence, phase('P'|'S')]
+    list of list
+        각 원소 = [network, station, channel, arrival(UTCDateTime), prob, phase('P'|'S')].
     """
     arr_lst = []
 
@@ -467,50 +467,46 @@ def picking(
     vs = np.mean([3.39, 3.61])
 ) -> pd.DataFrame:
     """
-    여러 SCNL에 대해 일괄 픽킹을 수행하고, 필요 시 결과 플롯을 그린 뒤,
-    모든 도달시각 테이블(picks_total)만 반환.
+    여러 SCNL에 대해 일괄로 P/S 도달확률을 추정하고 도달시각 표를 생성합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        'network', 'station', 'channel', 'data'(ObsPy Stream) 열을 포함해야 합니다.
-    model : Any
-        KFpicker 등 예측에 사용할 모델 객체.
+        최소 열: network, station, channel, data(ObsPy Stream).
+    model : str, default 'KFpicker_20230217.h5'
+        Keras 모델 파일 경로.
     twin : int, default 3000
-        시간창 길이(샘플).
+        창 길이(샘플).
     stride : int, default 3000
-        시간창 간격(샘플).
+        창 간 이동(샘플).
     verbose : bool, default True
-        True이면 진행 상황 및 결과 요약을 출력.
-    vp : float, default np.mean([5.63, 6.17])
-        P파 평균 속도 (km/s). 초기 진원시(origin time) 계산에 사용됩니다.
-    vs : float, default np.mean([3.39, 3.61])
-        S파 평균 속도 (km/s). 초기 진원시(origin time) 계산에 사용됩니다.
+        진행 로그 출력 여부.
+    vp : float, default mean([5.63, 6.17])
+        P파 평균 속도(km/s).
+    vs : float, default mean([3.39, 3.61])
+        S파 평균 속도(km/s).
 
     Returns
     -------
-    picks_total : pandas.DataFrame
-        모든 관측소/채널에 대한 도달시각 테이블
-        columns = ['network','station','channel','arrival','prob','phase'].
+    pandas.DataFrame
+        도달시각/확률을 메타와 병합해 상대 좌표 및 주행시간이 포함된 테이블.
     """
     # 모델 불러오기
     model = tf.keras.models.load_model(model, compile=False)
 
-    # 전체 Stream 구성
-    st = _extractStream(data)
-
+    # data로부터 Stream, 관측소 정보 추출
+    st = _extractStream(data)    
     scnl_df = data.loc[:, ['network', 'station', 'channel']].copy()
-    Y_buf: list[np.ndarray] = []
-    startT_buf: list = []
-
+    
     # 인공지능 모델 피킹 수행
+    Y_buf = []
+    startT_buf = []
+    
     for _, row in scnl_df.iterrows():
         network, station, channel = row.network, row.station, row.channel
 
-        enz_array, Y_med, startT = _pick_single(
-            st.copy(), network, station, channel,
-            twin=twin, stride=stride, model=model
-        )
+        enz_array, Y_med, startT = _pick_single(st.copy(), network, station, channel, 
+                                                twin=twin, stride=stride, model=model)
         Y_buf.append(Y_med)
         startT_buf.append(startT)
 
@@ -590,7 +586,26 @@ def picking(
     return data_rel
 
 def _calc_origintime(picks_total, vp, vs):
-    # Extract P and S arrival times for each station
+    """
+    관측소별 P/S 도달시각으로부터 진원시(origin time)를 추정합니다.
+
+    t0 = tP - (tS - tP) / ((vp / vs) - 1)
+
+    Parameters
+    ----------
+    picks_total : pandas.DataFrame
+        최소 열: station, phase('P'|'S'), arrival(UTCDateTime).
+    vp : float
+        P파 속도(km/s).
+    vs : float
+        S파 속도(km/s).
+
+    Returns
+    -------
+    obspy.UTCDateTime or None
+        관측소별 t0 후보의 평균값. 유효 P/S 쌍이 없으면 None.
+    """
+    # 각 관측소에 대해 P, S 도달시각 추출
     picks_by_station = {}
     for index, row in picks_total.iterrows():
         station = row['station']
@@ -623,32 +638,23 @@ def _calc_origintime(picks_total, vp, vs):
 
 def _calc_deg2km(standard_lat, standard_lon, lat, lon):
     """
-    위경도 좌표(도)를 기준점 대비 남북/동서 거리(km)로 변환합니다.
-
-    Notes
-    -----
-    - 변환 결과는 (y, x) 순으로 반환합니다.
-      y = 북쪽(+) / 남쪽(−) 거리 [km]
-      x = 동쪽(+) / 서쪽(−) 거리 [km]
-    - 경도(동서) 환산 시 주어진 위도(lat)에 대해 cos 보정을 적용합니다.
+    위/경도(도)를 기준점 대비 남북/동서 거리(km)로 변환합니다.
 
     Parameters
     ----------
     standard_lat : float
-        기준점 위도(도)
+        기준 위도(도).
     standard_lon : float
-        기준점 경도(도)
+        기준 경도(도).
     lat : float or array_like
-        변환할 위도(도)
+        변환할 위도(도).
     lon : float or array_like
-        변환할 경도(도)
+        변환할 경도(도).
 
     Returns
     -------
-    y : float or ndarray
-        기준점 대비 남북 거리(km)
-    x : float or ndarray
-        기준점 대비 동서 거리(km)
+    tuple[float | numpy.ndarray, float | numpy.ndarray]
+        (y_km, x_km) = (북(+)/남(−), 동(+)/서(−)).
     """
     dlat = lat - standard_lat
     dlon = lon - standard_lon
@@ -659,26 +665,17 @@ def _calc_deg2km(standard_lat, standard_lon, lat, lon):
 
 def calc_relative_distance(data):
     """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)으로부터 각 관측소까지의 동서/남북 거리(km)를 계산하여 반환합니다.
-
-    기준점은 `data['P_travel']`가 최소인 관측소의 (latitude, longitude)입니다.
-    변환은 내부적으로 `_calc_deg2km` 함수를 사용하며,
-    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
+    가장 먼저 P가 도달한 관측소를 기준점으로 각 관측소의 동서/남북 거리(km)를 계산합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        관측소 위경도(도) 및 P파 주행시간을 가진 DataFrame. 최소 열:
-        - latitude, longitude, P_travel
+        최소 열: latitude, longitude, P_travel.
 
     Returns
     -------
-    data : pandas.DataFrame
-        Easting_km, Northing_km 열이 추가된 DataFrame
-    data["Easting_km"].tolist() : list[float]
-        관측소별 동서 거리(km) 리스트 (동쪽 +)
-    data["Northing_km"] : list[float]
-        관측소별 남북 거리(km) 리스트 (북쪽 +)
+    pandas.DataFrame
+        Easting_km, Northing_km 열이 추가된 DataFrame.
     """
     lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
     lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
@@ -692,14 +689,23 @@ def calc_relative_distance(data):
     return data
 
 
-def build_relative_dataset(
-    data: pd.DataFrame,
-    picks_total: pd.DataFrame,
-    origin_time: UTCDateTime | None = None
-    ):
+def build_relative_dataset(data: pd.DataFrame, picks_total: pd.DataFrame, origin_time: UTCDateTime | None = None):
     """
-    picks_total(관측 도달시각) + data(관측소 메타)를 병합하여
-    origin_time 기준 주행시간(P_trv/S_trv)과 상대 위치/거리 테이블을 생성.
+    도달시각(picks_total)과 관측소 메타(data)를 병합해 주행시간/상대좌표 테이블을 생성합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        관측소 메타(위치/고도 등).
+    picks_total : pandas.DataFrame
+        도달시각/확률 표.
+    origin_time : obspy.UTCDateTime or None, optional
+        기준 진원시. None이면 계산 과정에서 유도된 값을 사용.
+
+    Returns
+    -------
+    pandas.DataFrame
+        P/S 도달시각, 주행시간(P_travel/S_travel), Easting/Northing_km 포함 테이블.
     """
     merged_data = picks_total.merge(data, on=["network","station","channel"], how="left")
 
@@ -739,52 +745,54 @@ def plot_picking(
     verbose: bool = True,
 ) -> None:
     """
-    주어진 DataFrame에서 특정 station만 골라 모델 예측(P/S 확률)을 수행하고,
-    3성분 파형 + [P,S,Noise] 확률을 한 Figure에 바로 시각화합니다.
-    (network, channel prefix는 data에서 자동으로 가져옴)
+    단일 관측소에 대해 모델 추론(P/S 확률) 후 파형과 함께 플롯합니다.
 
     Parameters
     ----------
     data : pandas.DataFrame
-        'network','station','channel','data'(ObsPy Stream) 열 포함
+        최소 열: network, station, channel, data(ObsPy Stream).
     station : str
-        대상 관측소명
+        대상 관측소명.
     model_path : str, default 'KFpicker_20230217.h5'
-        Keras 모델 경로(h5 등)
+        Keras 모델 경로.
     twin : int, default 3000
-        윈도우 길이(샘플)
+        창 길이(샘플).
     stride : int, default 3000
-        윈도우 이동(샘플)
+        창 간 이동(샘플).
     verbose : bool, default True
-        로그 출력 여부
+        로그 출력 여부.
+
+    Returns
+    -------
+    None
     """
-    # 0) 컬럼 체크
+    # 컬럼 체크
     required = {"network","station","channel","data"}
     if not required.issubset(set(data.columns)):
         miss = required - set(data.columns)
         raise ValueError(f"data에 필요한 열이 없습니다: {sorted(miss)}")
 
-    # 1) 대상 관측소만 필터
+    # 대상 관측소만 필터
     filtered = data.loc[data["station"] == station].copy()
     if filtered.empty:
         print(f"[warn] station='{station}' 에 해당하는 행이 없습니다.")
         return
 
-    # 2) 스트림 구성
+    # Stream 구성
     try:
         st = _extractStream(filtered)
     except Exception as e:
         print(f"[error] _extractStream 실패: {e}")
         return
 
-    # 3) 모델 로드
+    # 모델 로드
     try:
         model = tf.keras.models.load_model(model_path, compile=False)
     except Exception as e:
         print(f"[error] 모델 로드 실패({model_path}): {e}")
         return
 
-    # 4) (network, channel) 조합 목록
+    # (network, channel) 조합 목록
     scnl_df = (
         filtered.loc[:, ["network", "station", "channel"]]
         .drop_duplicates()
@@ -794,24 +802,24 @@ def plot_picking(
         print("[warn] 선택된 관측소에서 유효한 SCNL이 없습니다.")
         return
 
-    # 5) 관측소 내 모든 (network, channel) 조합에 대해 예측 + 즉시 플롯
+    # 관측소 내 모든 (network, channel) 조합에 대해 예측 + 플롯
     for _, r in scnl_df.iterrows():
         net = str(r["network"])
         sta = str(r["station"])
         cha = str(r["channel"])   # 'HG','HH' 등 prefix 가정
 
         try:
-            # 5-1) 모델 예측 (E/N/Z 파형, 확률시퀀스, 시작시각)
+            # 모델 예측 (E/N/Z 파형, 확률시퀀스, 시작시각)
             enz_array, Y_med, startT = _pick_single(
                 st.copy(), net, sta, cha,
                 twin=twin, stride=stride, model=model
             )
 
-            # 5-2) 샘플링레이트(절대시간축 표시에 사용)
+            # 샘플링레이트(절대시간축 표시에 사용)
             sel = st.select(network=net, station=sta, channel=f"{cha}*")
             fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
 
-            # 5-3) 플로팅(결합형)
+            # 플로팅
             npts = enz_array.shape[0]
             if startT is not None and fs is not None:
                 dt = 1.0 / fs
@@ -868,34 +876,23 @@ def plot_picking(
 ## ====== Calculate hypocenter and origin time ====== 
 def calc_pred(mp, vp, vs, data):
     """
-    주어진 진원 파라미터와 속도 모델을 기반으로 각 관측소의
-    예상 P파/S파 도달시간과 주행거리를 계산합니다.
+    추정 진원(mp, [X,Y,Z,T])과 속도(vp, vs)로 각 관측소의 예상 도달시각/거리 등을 계산합니다.
 
     Parameters
     ----------
-    mp : ndarray of shape (4,)
-        진원 파라미터 [X, Y, Z, T]
-        - X : km, 기준점 대비 동서 좌표 (+동/−서)
-        - Y : km, 기준점 대비 남북 좌표 (+북/−남)
-        - Z : km, 진원 깊이
-        - T : s, 진원시
+    mp : numpy.ndarray
+        shape (4,) = [X_km, Y_km, Z_km, T_s].
     vp : float
-        P파 속도 (km/s)
+        P파 속도(km/s).
     vs : float
-        S파 속도 (km/s)
+        S파 속도(km/s).
     data : pandas.DataFrame
-        관측소 분포 정보. 최소 열:
-        - Northing_km, Easting_km, elevation
+        최소 열: Northing_km, Easting_km, elevation.
 
     Returns
     -------
-    data : pandas.DataFrame
-        입력 DataFrame에 다음 열이 추가된 객체
-        - hypo_dist_pred : 관측소–진원 거리 (km)
-        - P_trv_pred : P파 주행시간 (s)
-        - S_trv_pred : S파 주행시간 (s)
-        - P_arr_pred : P파 예상 도달시각 (s)
-        - S_arr_pred : S파 예상 도달시각 (s)
+    pandas.DataFrame
+        hypo_dist_pred, P/S_travel_pred, P/S_arrival_pred 열이 추가된 DataFrame.
     """
     dx = data.Easting_km - mp[0]  # 동서
     dy = data.Northing_km - mp[1]  # 남북
@@ -910,7 +907,17 @@ def calc_pred(mp, vp, vs, data):
 
 def calc_res(data):
     """
-    관측(UTCDatetime)과 예측(초) 사이의 도달시각 잔차를 계산.
+    관측(UTCDateTime)과 예측(초) 사이의 P/S 도달시각 잔차를 계산합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        관측·예측 도달시각 열을 포함한 테이블.
+
+    Returns
+    -------
+    tuple of numpy.ndarray
+        (res_p, res_s, valid_s) = (P 잔차, S 잔차, S 유효 마스크).
     """
     # P
     obs_p  = data["P_arrival"].map(lambda x: float(x.timestamp))
@@ -933,32 +940,32 @@ def calc_res(data):
 
 def calc_G(mp, vp, vs, data, valid_s):
     """
-    P파 및 S파의 G 행렬을 계산합니다.
+    P/S 도달시각에 대한 선형화 G 행렬을 계산합니다.
 
-    Parameter
+    Parameters
     ----------
-    mp : ndarray
-        현재 진원 추정 파라미터 [X, Y, Z, T] (km, s)
+    mp : numpy.ndarray
+        현재 추정 진원 [X,Y,Z,T], 단위 (km, s).
     vp : float
-        P파 속도 (km/s)
+        P파 속도(km/s).
     vs : float
-        S파 속도 (km/s)
-    data : DataFrame
-        관측소 정보 (Northing_km, Easting_km, elevation 포함)
-    valid_s : ndarray of bool
-        S파 도달시각이 유효한 관측소를 나타내는 불리언 마스크
+        S파 속도(km/s).
+    data : pandas.DataFrame
+        최소 열: Northing_km, Easting_km, elevation.
+    valid_s : numpy.ndarray of bool
+        S 도달시각이 존재하는 관측소 마스크.
 
     Returns
     -------
-    G : ndarray, shape (n_obs, 4)
-        G 행렬
+    numpy.ndarray
+        shape (n_obs, 4) G 행렬.
     """
     # 공통 거리 (모든 관측소, P)
     R_all = (
         np.sqrt(
             (mp[0] - data.Easting_km) ** 2
             + (mp[1] - data.Northing_km) ** 2
-            + (mp[2] - (data.elevation / 1000)) ** 2
+            + (mp[2] - (data.elevation / 1000.0)) ** 2
         )
         + 1e-12
     )  # 0-나눗셈 방지용 eps
@@ -966,166 +973,11 @@ def calc_G(mp, vp, vs, data, valid_s):
     # P파 G (모든 관측소)
     G_x_p = (mp[0] - data.Easting_km) / (vp * R_all)
     G_y_p = (mp[1] - data.Northing_km) / (vp * R_all)
-    G_z_p = (mp[2] - (data.elevation / 1000)) / (vp * R_all)
+    G_z_p = (mp[2] - (data.elevation / 1000.0)) / (vp * R_all)
     G_t_p = np.ones(len(data))
     G_p = np.vstack([G_x_p, G_y_p, G_z_p, G_t_p]).T
 
     # S파 (유효 관측소만)
-    m = valid_s.to_numpy() if hasattr(valid_s, "to_numpy") else valid_s
-    if np.any(m):
-        R_s = (
-            np.sqrt(
-                (mp[0] - data.Easting_km[m]) ** 2
-                + (mp[1] - data.Northing_km[m]) ** 2
-                + (mp[2] - (data.elevation[m] / 1000)) ** 2
-            )
-            + 1e-12
-        )
-        G_x_s = (mp[0] - data.Easting_km[m]) / (vs * R_s)
-        G_y_s = (mp[1] - data.Northing_km[m]) / (vs * R_s)
-        G_z_s = (mp[2] - (data.elevation[m] / 1000)) / (vs * R_s)
-        G_t_s = np.ones(int(np.count_nonzero(m)))
-        G_s = np.vstack([G_x_s, G_y_s, G_z_s, G_t_s]).T
-        G = np.vstack([G_p, G_s])
-    else:
-        G = G_p
-    return G
-
-
-def Calc_rms(res_p, res_s):
-    """
-    P파 및 S파 잔차를 합쳐 전체 RMS를 계산합니다.
-
-    Parameters
-    ----------
-    res_p : ndarray
-        모든 관측소의 P파 도달시각 잔차 (관측치 - 예측치)
-    res_s : ndarray
-        유효한 관측소의 S파 도달시각 잔차 (관측치 - 예측치)
-
-    Returns
-    -------
-    res : ndarray
-        P파와 S파 잔차를 합친 전체 잔차
-    rms : float
-        전체 잔차의 RMS 값
-    """
-    res = np.hstack([res_p, res_s])
-    rms = np.sqrt(np.mean(res**2))
-    return res, rms
-
-
-def get_dm(G, res):
-    """
-    모델 변수 dm을 구합니다.
-
-    (G^T G) dm = G^T res 를 Conjugate Gradient 방식으로 풉니다.
-
-    Parameters
-    ----------
-    G : ndarray
-        G 행렬 (n_obs × 4)
-    res : ndarray
-        잔차 벡터 (n_obs × 1)
-
-    Returns
-    -------
-    dm : ndarray
-        추정된 모델 변수 벡터
-    """
-    GTG = G.T.dot(G)
-    GTres = G.T.dot(res)
-    dm, info = cg(GTG, GTres)
-    return dm
-
-
-def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
-    """
-    기준점으로부터의 남북/동서 거리(km)를 위경도 좌표(도)로 변환합니다.
-
-    Notes
-    -----
-    - 입력은 (y_km, x_km) 순서입니다.
-      y_km = 북쪽(+) / 남쪽(−) 거리 [km]
-      x_km = 동쪽(+) / 서쪽(−) 거리 [km]
-    - 경도(동서) 환산 시 결과 위도(lat)에 대해 cos 보정을 적용합니다.
-
-    Parameters
-    ----------
-    standard_lat : float
-        기준점 위도(도)
-    standard_lon : float
-        기준점 경도(도)
-    y_km : float
-        기준점 대비 남북 거리(km) (+북/−남)
-    x_km : float
-        기준점 대비 동서 거리(km) (+동/−서)
-
-    Returns
-    -------
-    lat : float
-        변환된 위도(도)
-    lon : float
-        변환된 경도(도)
-    """
-    dlat = y_km / 111.32
-    y = dlat + standard_lat
-    dlon = x_km / (111.32 * np.cos(np.radians(y)))
-    x = dlon + standard_lon
-    return y, x
-
-
-def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
-    """
-    기준점(가장 먼저 P파가 도달한 관측소의 위경도)에서 진원까지의 남북/동서 거리(km)를 위경도 변화(도)로 변환하여 진원의 위경도 좌표(도)를 반환합니다.
-
-    기준점은 `data['P_trv']`가 최소인 관측소의 (latitude, longitude)입니다.
-    변환은 내부적으로 `_calc_km2deg` 함수를 사용하며,
-    경도(동서) 환산에는 기준 위도 φ에서 cos(φ)을 곱하는 근사를 적용합니다.
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        기준점 계산을 위한 관측소 위경도(도) 정보를 포함. 최소 열: latitude, longitude
-    hypo_lat_km : float
-        기준점 대비 남북 거리(km) (+북/−남)
-    hypo_lon_km : float
-        기준점 대비 동서 거리(km) (+동/−서)
-
-    Returns
-    -------
-    hypo_lat_deg : float
-        진원의 위도(도)
-    hypo_lon_deg : float
-        진원의 경도(도)
-    """
-    lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
-    lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
-    hypo_lat_deg, hypo_lon_deg = _calc_km2deg(
-        lat_zero, lon_zero, hypo_lat_km, hypo_lon_km
-    )
-    return hypo_lat_deg, hypo_lon_deg
-
-
-def calc_G(mp, vp, vs, data, valid_s):
-    """
-    P파 및 S파에 대한 G 행렬 계산. (단위: km, s)
-    """
-    R_all = (
-        np.sqrt(
-            (mp[0] - data.Easting_km) ** 2
-            + (mp[1] - data.Northing_km) ** 2
-            + (mp[2] - (data.elevation / 1000.0)) ** 2   # m → km
-        )
-        + 1e-12
-    )
-
-    G_x_p = (mp[0] - data.Easting_km) / (vp * R_all)
-    G_y_p = (mp[1] - data.Northing_km) / (vp * R_all)
-    G_z_p = (mp[2] - (data.elevation / 1000.0)) / (vp * R_all)
-    G_t_p = np.ones(len(data))
-    G_p   = np.vstack([G_x_p, G_y_p, G_z_p, G_t_p]).T
-
     m = valid_s.to_numpy() if hasattr(valid_s, "to_numpy") else valid_s
     if np.any(m):
         R_s = (
@@ -1140,11 +992,107 @@ def calc_G(mp, vp, vs, data, valid_s):
         G_y_s = (mp[1] - data.Northing_km[m]) / (vs * R_s)
         G_z_s = (mp[2] - (data.elevation[m] / 1000.0)) / (vs * R_s)
         G_t_s = np.ones(int(np.count_nonzero(m)))
-        G_s   = np.vstack([G_x_s, G_y_s, G_z_s, G_t_s]).T
-        G     = np.vstack([G_p, G_s])
+        G_s = np.vstack([G_x_s, G_y_s, G_z_s, G_t_s]).T
+        G = np.vstack([G_p, G_s])
     else:
         G = G_p
     return G
+
+
+def Calc_rms(res_p, res_s):
+    """
+    P/S 잔차를 합쳐 전체 잔차 벡터와 RMS를 계산합니다.
+
+    Parameters
+    ----------
+    res_p : numpy.ndarray
+        P 잔차(관측-예측).
+    res_s : numpy.ndarray
+        S 잔차(관측-예측).
+
+    Returns
+    -------
+    tuple
+        (res, rms) = (전체 잔차 벡터, RMS 값).
+    """
+    res = np.hstack([res_p, res_s])
+    rms = np.sqrt(np.mean(res**2))
+    return res, rms
+
+
+def get_dm(G, res):
+    """
+    (G^T G) dm = G^T res 방정식을 CG로 풀어 모델 증분 dm을 구합니다.
+
+    Parameters
+    ----------
+    G : numpy.ndarray
+        G 행렬 (n_obs × 4).
+    res : numpy.ndarray
+        잔차 벡터.
+
+    Returns
+    -------
+    numpy.ndarray
+        모델 증분 dm.
+    """
+    GTG = G.T.dot(G)
+    GTres = G.T.dot(res)
+    dm, info = cg(GTG, GTres)
+    return dm
+
+
+def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
+    """
+    기준점으로부터 남북/동서 거리(km)를 위/경도 변화(도)로 변환합니다.
+
+    Parameters
+    ----------
+    standard_lat : float
+        기준 위도(도).
+    standard_lon : float
+        기준 경도(도).
+    y_km : float
+        북(+)/남(−) 거리(km).
+    x_km : float
+        동(+)/서(−) 거리(km).
+
+    Returns
+    -------
+    tuple[float, float]
+        (lat_deg, lon_deg).
+    """
+    dlat = y_km / 111.32
+    y = dlat + standard_lat
+    dlon = x_km / (111.32 * np.cos(np.radians(y)))
+    x = dlon + standard_lon
+    return y, x
+
+
+def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
+    """
+    기준점(최초 P 도달 관측소) 기준의 (Y,X)[km]를 위/경도(도)로 변환해 진원 좌표를 반환합니다.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        최소 열: latitude, longitude, P_travel.
+    hypo_lat_km : float
+        북(+)/남(−) 거리(km).
+    hypo_lon_km : float
+        동(+)/서(−) 거리(km).
+
+    Returns
+    -------
+    tuple[float, float]
+        (hypo_lat_deg, hypo_lon_deg).
+    """
+    lat_zero = data.loc[data["P_travel"].idxmin(), "latitude"]
+    lon_zero = data.loc[data["P_travel"].idxmin(), "longitude"]
+    hypo_lat_deg, hypo_lon_deg = _calc_km2deg(
+        lat_zero, lon_zero, hypo_lat_km, hypo_lon_km
+    )
+    return hypo_lat_deg, hypo_lon_deg
 
 
 def calc_hypocenter(data_rel, iteration=10,
@@ -1152,14 +1100,29 @@ def calc_hypocenter(data_rel, iteration=10,
                     vp=np.mean([5.63, 6.17]),
                     vs=np.mean([3.39, 3.61])):
     """
-    선형화 역산으로 [X,Y,Z,T] 추정.
-    - T는 'epoch seconds(절대시각)'로 해석하여 출력 (UTC).
-    - 매 Iteration마다 위/경/깊이/시각/RMS를 포맷 맞춰 출력.
+    선형화 역산으로 [X,Y,Z,T]를 반복 추정하고 각 반복의 결과를 출력합니다.
+
+    Parameters
+    ----------
+    data_rel : pandas.DataFrame
+        상대 좌표/도달시각이 포함된 테이블.
+    iteration : int, default 10
+        반복 횟수.
+    mp : numpy.ndarray, default [0,0,10,0]
+        초기 모델 [X_km, Y_km, Z_km, T_s].
+    vp : float
+        P파 속도(km/s).
+    vs : float
+        S파 속도(km/s).
+
+    Returns
+    -------
+    pandas.DataFrame
+        각 반복의 [X,Y,Z,T,RMS] 기록.
     """
     def _fmt_time_from_epoch(ts: float) -> str:
         dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
         return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{int(dt.microsecond/1000):03d}"
-
 
     # --- mean_origin 계산 ---
     origin_times = []
@@ -1231,48 +1194,76 @@ def calc_hypocenter(data_rel, iteration=10,
 
 def plot_hypocenter(
     data: pd.DataFrame,
-    result_df: pd.DataFrame | None = None,
-    center=None,
-    html_out="hypocenter.html",
-    zoom_start=8,
-    show_station_labels=True,
-    show_hypocenter=True,
-    show_rings=True,
-    show_ring_labels=True,
-    use_auto_label=True,
-    rings_km=(30, 50, 100),
-):
+    result_df: pd.DataFrame,
+    center: tuple[float, float] | None = None,
+    html_out: str = "hypocenter.html",
+    zoom_start: int = 8,
+    show_station_labels: bool = True,
+    show_rings: bool = True,
+    show_ring_labels: bool = True,
+    use_auto_label: bool = True,
+    rings_km: tuple[int, ...] = (30, 50, 100),
+) -> None:
     """
-    Folium 지도에 관측소(기본)와 선택적으로 진원/반경을 표시하고 저장.
+    Folium 지도에 관측소와 진원(필수), 선택적 반경 링을 표시하고 저장합니다.
 
-    result_df는 show_hypocenter=True일 때만 사용하며 마지막 행의 ['X','Y'](km)를 이용.
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        관측소 메타 정보 테이블. 최소 열:
+        - latitude, longitude, station, network, P_travel
+        (P_travel은 기준점 산정을 위해 필요)
+    result_df : pandas.DataFrame
+        역산 결과 테이블. 마지막 행의 ['X','Y'](km)를 진원 평면좌표로 사용합니다.
+    center : tuple[float, float] or None, default None
+        지도 중심 (위도, 경도). None이면 계산된 진원 좌표를 사용합니다.
+    html_out : str, default 'hypocenter.html'
+        지도로 저장할 HTML 파일명.
+    zoom_start : int, default 8
+        초기 확대(zoom) 레벨.
+    show_station_labels : bool, default True
+        관측소 텍스트 라벨을 표시할지 여부.
+    show_rings : bool, default True
+        중심을 기준으로 반경 원을 표시할지 여부.
+    show_ring_labels : bool, default True
+        반경 원의 라벨을 표시할지 여부.
+    use_auto_label : bool, default True
+        반경 라벨을 자동 배치할지 여부.
+    rings_km : tuple[int, ...], default (30, 50, 100)
+        표시할 반경 값들(단위: km).
+
+    Returns
+    -------
+    None
+        지도를 화면에 표시하고, `html_out` 경로로 저장합니다.
     """
-    required = {"latitude", "longitude", "station", "network"}
+    required = {"latitude", "longitude", "station", "network", "P_travel"}
     missing = required - set(data.columns)
     if missing:
         raise ValueError(f"필수 컬럼 누락: {sorted(missing)}")
 
-    # 진원 설정
-    if show_hypocenter:
-        if result_df is None:
-            raise ValueError("show_hypocenter=True 이면 result_df가 필요합니다.")
-        east_km = float(result_df.iloc[-1]["X"])
-        north_km = float(result_df.iloc[-1]["Y"])
+    # 진원 좌표 계산
+    if not {"X", "Y"}.issubset(result_df.columns):
+        raise ValueError("result_df에는 마지막 행 기준의 'X','Y'(km) 컬럼이 필요합니다.")
+    east_km = float(result_df.iloc[-1]["X"])
+    north_km = float(result_df.iloc[-1]["Y"])
+    hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
+    hypo = (hypo_lat, hypo_lon)
 
-        # 외부 함수: X=east_km, Y=north_km -> (lat, lon)
-        hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
-        hypo = (hypo_lat, hypo_lon)
-        
     # 중심점 결정
     if center is None:
         center = hypo
     else:
         center = (float(center[0]), float(center[1]))
 
-    # 타일(Esri)
+    # Folium 지도 객체 생성
     m = folium.Map(
-        width=900, height=900, location=center, zoom_start=zoom_start, control_scale=True,
-        tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"),
+        width=900,
+        height=900,
+        location=center,
+        zoom_start=zoom_start,
+        control_scale=True,
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr=("Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, "
               "Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"),
         name="Esri World Imagery",
@@ -1280,29 +1271,49 @@ def plot_hypocenter(
 
     # 관측소 마커 + (선택) 라벨
     for _, row in data.iterrows():
-        lat, lon = float(row['latitude']), float(row['longitude'])
-        tip = f"station:{row['station']}<br/>Network:{row['network']}<br/>Location:{lat:.4f}, {lon:.4f}"
+        lat, lon = float(row["latitude"]), float(row["longitude"])
+        tip = (
+            f"Station: {row['station']}<br/>"
+            f"Network: {row['network']}<br/>"
+            f"Location: {lat:.4f}, {lon:.4f}"
+        )
         folium.features.RegularPolygonMarker(
-            location=(lat, lon), tooltip=tip, color="yellow", fill_color="green",
-            number_of_sides=6, rotation=30, radius=5, fill_opacity=1,
+            location=(lat, lon),
+            tooltip=tip,
+            color="yellow",
+            fill_color="green",
+            number_of_sides=6,
+            rotation=30,
+            radius=5,
+            fill_opacity=1,
         ).add_to(m)
+
         if show_station_labels:
-            folium.Marker((lat, lon),
-                icon=DivIcon(icon_size=(0, 0), icon_anchor=(0, -20),
-                             html=f'<div style="font-size: 8pt; color: white;">{row['station']}</div>')
+            folium.Marker(
+                (lat, lon),
+                icon=DivIcon(
+                    icon_size=(0, 0),
+                    icon_anchor=(0, -20),
+                    html=f"<div style='font-size: 8pt; color: white;'>{row['station']}</div>",
+                ),
             ).add_to(m)
-            
+
     # 진원 마커
-        folium.Marker(
-            location=[hypo_lat, hypo_lon],
-            icon=folium.Icon(color="red", icon="star", prefix="fa"),
-            tooltip="Hypocenter",
-        ).add_to(m)
+    folium.Marker(
+        location=[hypo_lat, hypo_lon],
+        icon=folium.Icon(color="red", icon="star", prefix="fa"),
+        tooltip="Hypocenter",
+    ).add_to(m)
 
     # 반경 원/라벨
     if show_rings:
         for rk in rings_km:
-            folium.Circle(location=center, color="white", fill_opacity=0, radius=rk * 1000.0).add_to(m)
+            folium.Circle(
+                location=center,
+                color="white",
+                fill_opacity=0,
+                radius=rk * 1000.0,
+            ).add_to(m)
 
         if show_ring_labels:
             lat0 = center[0]
@@ -1315,22 +1326,28 @@ def plot_hypocenter(
                     fixed = {30: (0.21, 0.20), 50: (0.35, 0.35), 100: (0.70, 0.70)}
                     dy, dx = fixed.get(rk, (0.21, 0.20))
                 width = 60 if rk >= 100 else 50
-                text = (f"<div style='background-color: white; padding: 5px; "
-                        f"border: 1px solid black; border-radius: 1px; display: inline-block; "
-                        f"width: {width}px;'><b>{rk} km</b></div>")
+                text = (
+                    "<div style='background-color: white; padding: 5px; "
+                    "border: 1px solid black; border-radius: 1px; display: inline-block; "
+                    f"width: {width}px;'><b>{rk} km</b></div>"
+                )
                 folium.Marker(
                     location=(center[0] + dy, center[1] + dx),
                     icon=DivIcon(html=f"<div style='font-size: 10pt; font-weight: bold;'>{text}</div>"),
                 ).add_to(m)
 
     # 전체 화면 버튼
-    plugins.Fullscreen(position="topright", title="Expand", title_cancel="Exit",
-                       force_separate_button=True).add_to(m)
+    plugins.Fullscreen(
+        position="topright",
+        title="Expand",
+        title_cancel="Exit",
+        force_separate_button=True,
+    ).add_to(m)
 
     m.save(html_out)
     display(m)
 
-
+    
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
 __author__ = "Marcos Duarte, https://github.com/demotu/BMC"
 __version__ = "1.0.6"
@@ -1551,6 +1568,3 @@ def _plot(x, mph, mpd, threshold, edge, valley, ax, ind, title):
         # plt.grid()
         if no_ax:
             plt.show()
-
-            
-        
