@@ -1129,7 +1129,7 @@ def calc_hypocenter(data_rel, iteration=5,
         mp[3] = float(mean_origin.timestamp)
 
     print('선형화 역산을 수행합니다...')
-    header_bar = "=" * 80
+    header_bar = "=" * 120
     print(header_bar)
 
     results = []
@@ -1173,9 +1173,10 @@ def calc_hypocenter(data_rel, iteration=5,
 
     hypo_lat, hypo_lon = _calc_hypocenter_coords(data_rel, north_km, east_km)
 
-    print("\n" + "=" * 80)
+    print("\n")
+    print(header_bar)
     print("결정된 지진의 진원 요소")
-    print("=" * 80)
+    print(header_bar)
     print(
     f"{'위도':>12} | "
     f"{'경도':>12} | "
@@ -1190,7 +1191,7 @@ def calc_hypocenter(data_rel, iteration=5,
     f"{_fmt_time_from_epoch(T_abs):>29} | "
     f"{rms:12.3f}"
     )
-    print("=" * 80)
+    print(header_bar)
 
     return result_df
 
