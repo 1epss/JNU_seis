@@ -817,7 +817,7 @@ def plot_picking(
             ax2.plot(times, enz_array[:, 1], "k", label="N")
             ax3.plot(times, enz_array[:, 2], "k", label="Z")
             ax4.plot(times, Y_med[:, 0], label="P", color="blue", zorder=10)
-            ax4.plot(times, Y_med[:, 1], label="S", color="red", zorder=10)
+            ax4.plot(times, Y_med[:, 1], label="S", color="red", linestyle="--", zorder=10)
             ax4.plot(times, Y_med[:, 2], label="Noise", color="gray")
 
             for ax in (ax1, ax2, ax3):
@@ -1172,25 +1172,25 @@ def calc_hypocenter(data_rel, iteration=5,
     origin   = UTCDateTime(T_abs)
 
     hypo_lat, hypo_lon = _calc_hypocenter_coords(data_rel, north_km, east_km)
-    line_len = 117
-    print("\n" + "=" * line_len)
+
+    print("\n" + "=" * 80)
     print("결정된 지진의 진원 요소")
-    print("=" * line_len)
+    print("=" * 80)
     print(
-        f"{'위도':>12} | "
-        f"{'경도':>12} | "
-        f"{'깊이(km)':>9} | "
-        f"{'진원시(UTC)':<26} | "
-        f"{'RMS':>7}"
+    f"{'위도':>12} | "
+    f"{'경도':>12} | "
+    f"{'깊이':>12} | "
+    f"{'진원시(UTC)':>26} | "
+    f"{'RMS':>12}"
     )
     print(
-        f"{hypo_lat:12.5f} | "
-        f"{hypo_lon:12.5f} | "
-        f"{depth:9.2f} | "
-        f"{_fmt_time_from_epoch(T_abs):<26} | "
-        f"{rms:7.3f}"
+    f"{hypo_lat:>13.5f}°| "
+    f"{hypo_lon:13.5f}°| "
+    f"{depth:11.2f} km | "
+    f"{_fmt_time_from_epoch(T_abs):>29} | "
+    f"{rms:12.3f}"
     )
-    print("=" * line_len)
+    print("=" * 80)
 
     return result_df
 
