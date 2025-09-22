@@ -872,6 +872,7 @@ def plot_picking(
 
             for ax in (ax1, ax2, ax3):
                 ax.tick_params(labelbottom=False)
+                ax.tick_params(bottom=True) 
 
             ax1.set_ylabel("Count")
             ax2.set_ylabel("Count")
