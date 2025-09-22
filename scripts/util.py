@@ -864,9 +864,14 @@ def plot_picking(
 
             if is_time:
                 ax4.xaxis.set_major_formatter(xfmt)
+                ax4.xaxis.set_minor_locator(mticker.AutoMinorLocator())
                 ax4.set_xlabel("Time (UTC)")
             else:
+                ax4.xaxis.set_minor_locator(mticker.AutoMinorLocator())
                 ax4.set_xlabel("Sample Index")
+
+            for ax in (ax1, ax2, ax3):
+                ax.tick_params(labelbottom=False)
 
             ax1.set_ylabel("Count")
             ax2.set_ylabel("Count")
