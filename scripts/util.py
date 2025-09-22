@@ -18,12 +18,6 @@ from scipy.sparse.linalg import cg
 from pathlib import Path
 from typing import Any, Tuple, List, Optional
 
-# ====== Module metadata ======
-__title__ = "util"
-__version__ = "1.0.0"
-__author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
-__license__ = "MIT"
-
 
 def read_data(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool = True) -> pd.DataFrame:
     """
@@ -97,7 +91,7 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
         t0 = trace.stats.starttime
         time_vector = [(t0 + j * dt).datetime for j in range(n)]
 
-        ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
+        ax.plot(time_vector, trace.data, "k", label=trace.stats.channel[-1])
         ax.set_ylabel("Count")
         ax.legend(loc="upper right")
         
@@ -752,28 +746,9 @@ def plot_picking(
 ) -> None:
     """
     단일 관측소에 대해 모델 추론(P/S 확률) 후 파형과 함께 플롯합니다.
-
-    Parameters
-    ----------
-    data : pandas.DataFrame
-        최소 열: network, station, channel, data(ObsPy Stream).
-    station : str
-        대상 관측소명.
-    model_path : str, default 'KFpicker_20230217.h5'
-        Keras 모델 경로.
-    twin : int, default 3000
-        창 길이(샘플).
-    stride : int, default 3000
-        창 간 이동(샘플).
-    verbose : bool, default True
-        로그 출력 여부.
-
-    Returns
-    -------
-    None
     """
     # 컬럼 체크
-    required = {"network","station","channel","data"}
+    required = {"network", "station", "channel", "data"}
     if not required.issubset(set(data.columns)):
         miss = required - set(data.columns)
         raise ValueError(f"data에 필요한 열이 없습니다: {sorted(miss)}")
@@ -812,7 +787,7 @@ def plot_picking(
     for _, r in scnl_df.iterrows():
         net = str(r["network"])
         sta = str(r["station"])
-        cha = str(r["channel"])   # 'HG','HH' 등 prefix 가정
+        cha = str(r["channel"])
 
         try:
             # 모델 예측 (E/N/Z 파형, 확률시퀀스, 시작시각)
@@ -821,66 +796,61 @@ def plot_picking(
                 twin=twin, stride=stride, model=model
             )
 
-            # 샘플링레이트(절대시간축 표시에 사용)
             sel = st.select(network=net, station=sta, channel=f"{cha}*")
             fs = sel[0].stats.sampling_rate if len(sel) > 0 else None
 
-            # 플로팅
+            # X축 구성
             npts = enz_array.shape[0]
             if startT is not None and fs is not None:
                 dt = 1.0 / fs
                 times = [(startT + j * dt).datetime for j in range(npts)]
-                xfmt = mdates.DateFormatter('%H:%M:%S')
                 is_time = True
             else:
-                times = np.arange(npts)
-                xfmt = None
+                times = np.arange(npts, dtype=float)
                 is_time = False
 
-            fig = plt.figure(figsize=(7, 5))
-            ax1 = fig.add_subplot(4, 1, 1)
-            ax2 = fig.add_subplot(4, 1, 2)
-            ax3 = fig.add_subplot(4, 1, 3)
-            ax4 = fig.add_subplot(4, 1, 4)
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(
+                4, 1, figsize=(7, 5), sharex=True
+            )
 
             ax1.plot(times, enz_array[:, 0], "k", label="E")
             ax2.plot(times, enz_array[:, 1], "k", label="N")
             ax3.plot(times, enz_array[:, 2], "k", label="Z")
-            ax1.set_xticks([]); ax2.set_xticks([]); ax3.set_xticks([])
-
-            ax4.plot(times, Y_med[:, 0], label="P", color = "blue", zorder=10)
-            ax4.plot(times, Y_med[:, 1], label="S", color = "red", zorder=10)
-            ax4.plot(times, Y_med[:, 2], label="Noise", color = "gray")
-
-            for ax in (ax1, ax2, ax3, ax4):
-                ax.legend(loc="upper right")
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-                ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
-                ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
-                ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
-                ax.grid(True, which="minor", axis="both", linestyle=":",  alpha=0.3)
-                
-            ax4.legend(loc="upper right", ncol=3)
-
-            if is_time:
-                ax4.xaxis.set_major_formatter(xfmt)
-                ax4.xaxis.set_minor_locator(mticker.AutoMinorLocator())
-                ax4.set_xlabel("Time (UTC)")
-            else:
-                ax4.xaxis.set_minor_locator(mticker.AutoMinorLocator())
-                ax4.set_xlabel("Sample Index")
+            ax4.plot(times, Y_med[:, 0], label="P", color="blue", zorder=10)
+            ax4.plot(times, Y_med[:, 1], label="S", color="red", zorder=10)
+            ax4.plot(times, Y_med[:, 2], label="Noise", color="gray")
 
             for ax in (ax1, ax2, ax3):
-                ax.tick_params(labelbottom=False)
-                ax.tick_params(bottom=True) 
+                ax.tick_params(labelbottom=False, bottom=True)
+                ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+                ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
+                ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.3)
+
+            if is_time:
+                ax4.xaxis.set_major_locator(mdates.AutoDateLocator())
+                ax4.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+                ax4.set_xlabel("Time (UTC)")
+            else:
+                ax4.xaxis.set_major_locator(mticker.MaxNLocator(nbins=6, integer=False))
+                ax4.set_xlabel("Sample Index")
+
+            ax4.xaxis.set_minor_locator(mticker.AutoMinorLocator())
+            ax4.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+
+            ax4.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
+            ax4.grid(True, which="minor", axis="both", linestyle=":", alpha=0.3)
+
+            for ax in (ax1, ax2, ax3):
+                ax.legend(loc="upper right")
+            ax4.legend(loc="upper right", ncol=3)
 
             ax1.set_ylabel("Count")
             ax2.set_ylabel("Count")
             ax3.set_ylabel("Count")
             ax4.set_ylabel("Probability")
 
-            plt.suptitle(f"Station {sta}")
-            plt.tight_layout()
+            fig.suptitle(f"Station {sta}")
+            fig.tight_layout()
             plt.show()
 
         except Exception as e:
@@ -889,7 +859,7 @@ def plot_picking(
                 import traceback; traceback.print_exc()
             continue
 
-
+            
 ## ====== Calculate hypocenter and origin time ====== 
 def _calc_pred(mp, vp, vs, data):
     """
