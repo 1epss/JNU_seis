@@ -1172,10 +1172,26 @@ def calc_hypocenter(data_rel, iteration=5,
     origin   = UTCDateTime(T_abs)
 
     hypo_lat, hypo_lon = _calc_hypocenter_coords(data_rel, north_km, east_km)
+    line_len = 117
+    print("\n" + "=" * line_len)
+    print("결정된 지진의 진원 요소")
+    print("=" * line_len)
     print(
-        f"결정된 지진의 진원 요소 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
-        f"깊이 : {depth:.2f} km, 시각(UTC) : {_fmt_time_from_epoch(T_abs)}, RMS : {rms:.3f}"
+        f"{'위도':>12} | "
+        f"{'경도':>12} | "
+        f"{'깊이(km)':>9} | "
+        f"{'진원시(UTC)':<26} | "
+        f"{'RMS':>7}"
     )
+    print(
+        f"{hypo_lat:12.5f} | "
+        f"{hypo_lon:12.5f} | "
+        f"{depth:9.2f} | "
+        f"{_fmt_time_from_epoch(T_abs):<26} | "
+        f"{rms:7.3f}"
+    )
+    print("=" * line_len)
+
     return result_df
 
 
@@ -1555,3 +1571,47 @@ def _plot(x, mph, mpd, threshold, edge, valley, ax, ind, title):
         # plt.grid()
         if no_ax:
             plt.show()
+            
+
+# ====== Run in Terminal ======
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Earthquake location practice: load data, pick phases with DL model, and locate hypocenter."
+    )
+    parser.add_argument(
+        "--data", "-d",
+        required=True,
+        help="지진 자료 경로 (예: buan2024_practice.pkl)"
+    )
+    parser.add_argument(
+        "--model", "-m",
+        required=True,
+        help="KFpicker 모델 경로 (예: KFpicker_20230217.h5)"
+    )
+    parser.add_argument(
+        "--iter", "-i",
+        type=int,
+        default=5,
+        help="역산 반복 횟수 (기본=5)"
+    )
+    args = parser.parse_args()
+
+    # 데이터 불러오기
+    data = read_data(args.data, verbose=True)
+
+    # 인공지능 모델로 P/S 도달시각 결정
+    data_rel = picking(data, model=args.model, verbose=True)
+
+    # 역산으로 진원 결정
+    result_df = calc_hypocenter(data_rel, iteration=args.iter)
+
+    # 결과 지도 저장
+    plot_hypocenter(
+        data_rel,
+        result_df,
+        html_out="hypocenter.html",
+        zoom_start=8
+    )
+    print("결과가 hypocenter.html 파일로 저장되었습니다.")
