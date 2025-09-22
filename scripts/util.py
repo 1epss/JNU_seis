@@ -3,11 +3,12 @@ from __future__ import annotations
 import folium
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import pickle
-import time
 import tensorflow as tf
+import time
 from datetime import datetime, timezone
 from folium import plugins
 from folium.features import DivIcon
