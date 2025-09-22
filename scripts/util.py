@@ -108,7 +108,7 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
         ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.3)   
         
         if i < len(stream) - 1:
-            ax.set_xticks([])
+            ax.tick_params(labelbottom=False)
         else:
             ax.set_xlabel("Time (UTC)")
 
@@ -539,7 +539,7 @@ def picking(
         )
 
     origin_time = _calc_origintime(picks_total, vp, vs)
-    data_rel = build_relative_dataset(picks_total, data, origin_time)
+    data_rel = _build_relative_dataset(picks_total, data, origin_time)
 
     if verbose:
         print("인공지능 모델을 이용하여 지진파의 도달시각을 결정합니다...")
