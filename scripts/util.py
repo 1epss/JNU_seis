@@ -24,7 +24,7 @@ __author__ = "Yoontaek Hong, Mingyu Doo, Gunwoo Kim"
 __license__ = "MIT"
 
 
-def read_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
+def read_data(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool = True) -> pd.DataFrame:
     """
     관측소 메타데이터와 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
 
@@ -45,10 +45,10 @@ def read_data(pkl_path: str | Path, verbose: bool = True) -> pd.DataFrame:
         data: pd.DataFrame = pickle.load(f)
 
     if verbose:
-        print("지진파 자료를 불러옵니다...")
+        print("지진 자료를 불러옵니다...")
         print("=" * 80)
         for _, row in data.iterrows():
-            print("관측소: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
+            print("Station: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
                 net=row["network"],
                 sta=row["station"],
                 cha=row["channel"],
@@ -101,12 +101,14 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
         ax.legend(loc="upper right")
 
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+        ax.grid(True, linestyle="--", which="both", axis="both", alpha=0.35)
+        
         if i < len(stream) - 1:
             ax.set_xticks([])
         else:
             ax.set_xlabel("Time (UTC)")
 
-    plt.suptitle(f"{station} station")
+    plt.suptitle(f"Station {station}")
     plt.tight_layout()
     plt.show()
     return
@@ -574,7 +576,7 @@ def picking(
                     s_arr_str, s_prob_str = "-", "-"
 
                 print(
-                    f"관측소: {sta} | "
+                    f"Station: {sta} | "
                     f"P파 도달시각: {p_arr_str} (확률 {p_prob_str}) | "
                     f"S파 도달시각: {s_arr_str} (확률 {s_prob_str})"
                 )
@@ -846,9 +848,9 @@ def plot_picking(
             ax4.plot(times, Y_med[:, 1], label="S", color = "red", zorder=10)
             ax4.plot(times, Y_med[:, 2], label="Noise", color = "gray")
 
-            ax1.legend(loc="upper right")
-            ax2.legend(loc="upper right")
-            ax3.legend(loc="upper right")
+            for ax in (ax1, ax2, ax3, ax4):
+                ax.legend(loc="upper right")
+                ax.grid(True, which="both", axis="both", alpha=0.35)
             ax4.legend(loc="upper right", ncol=3)
 
             if is_time:
@@ -862,7 +864,7 @@ def plot_picking(
             ax3.set_ylabel("Count")
             ax4.set_ylabel("Probability")
 
-            plt.suptitle(f"{sta} station")
+            plt.suptitle(f"Station {sta}")
             plt.tight_layout()
             plt.show()
 
@@ -1095,7 +1097,7 @@ def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     return hypo_lat_deg, hypo_lon_deg
 
 
-def calc_hypocenter(data_rel, iteration=10,
+def calc_hypocenter(data_rel, iteration=5,
                     mp=np.array([0.0, 0.0, 10.0, 0.0]),
                     vp=np.mean([5.63, 6.17]),
                     vs=np.mean([3.39, 3.61])):
@@ -1124,7 +1126,7 @@ def calc_hypocenter(data_rel, iteration=10,
         dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
         return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{int(dt.microsecond/1000):03d}"
 
-    # --- mean_origin 계산 ---
+    # mean_origin 계산
     origin_times = []
     for _, row in data_rel.iterrows():
         if pd.notna(row["S_arrival"]):
@@ -1163,7 +1165,7 @@ def calc_hypocenter(data_rel, iteration=10,
         T_abs    = float(mp[3])
         lat_deg, lon_deg = calc_hypocenter_coords(data_rel, north_km, east_km)
 
-        # 예시 양식처럼 한 줄로 포맷 출력
+        # 한 줄로 포맷 출력
         print(
             f"Iteration {it+1:<2d} | "
             f"위도: {lat_deg:>8.5f}° | "
@@ -1172,7 +1174,7 @@ def calc_hypocenter(data_rel, iteration=10,
             f"시각(UTC): {_fmt_time_from_epoch(T_abs):<26} | "
             f"RMS: {rms:>7.3f}"
         )
-        time.sleep(0.2)   # ✅ 각 iteration마다 출력 간격 0.2초
+        time.sleep(0.8)   # 각 iteration마다 출력 간격
 
     print(header_bar)
     result_df = pd.DataFrame(results, columns=["X", "Y", "Z", "T", "RMS"])
@@ -1186,7 +1188,7 @@ def calc_hypocenter(data_rel, iteration=10,
 
     hypo_lat, hypo_lon = calc_hypocenter_coords(data_rel, north_km, east_km)
     print(
-        f"최종 추정 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
+        f"결정된 지진의 진원 요소 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
         f"깊이 : {depth:.2f} km, 시각(UTC) : {_fmt_time_from_epoch(T_abs)}, RMS : {rms:.3f}"
     )
     return result_df
