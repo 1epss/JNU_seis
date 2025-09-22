@@ -99,9 +99,12 @@ def plot_data(data: pd.DataFrame, station: str) -> None:
         ax.plot(time_vector, trace.data, "k", label=trace.stats.channel)
         ax.set_ylabel("Count")
         ax.legend(loc="upper right")
-
+        
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-        ax.grid(True, linestyle="--", which="both", axis="both", alpha=0.35)
+        ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
+        ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+        ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
+        ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.3)   
         
         if i < len(stream) - 1:
             ax.set_xticks([])
@@ -665,7 +668,7 @@ def _calc_deg2km(standard_lat, standard_lon, lat, lon):
     return y, x
 
 
-def calc_relative_distance(data):
+def _calc_relative_distance(data):
     """
     가장 먼저 P가 도달한 관측소를 기준점으로 각 관측소의 동서/남북 거리(km)를 계산합니다.
 
@@ -691,7 +694,7 @@ def calc_relative_distance(data):
     return data
 
 
-def build_relative_dataset(data: pd.DataFrame, picks_total: pd.DataFrame, origin_time: UTCDateTime | None = None):
+def _build_relative_dataset(data: pd.DataFrame, picks_total: pd.DataFrame, origin_time: UTCDateTime | None = None):
     """
     도달시각(picks_total)과 관측소 메타(data)를 병합해 주행시간/상대좌표 테이블을 생성합니다.
 
@@ -734,7 +737,7 @@ def build_relative_dataset(data: pd.DataFrame, picks_total: pd.DataFrame, origin
         pivot["S_travel"] = pivot["S_arrival"].apply(_to_tt)
 
     # 상대 위치/거리 계산
-    data_rel = calc_relative_distance(pivot)
+    data_rel = _calc_relative_distance(pivot)
     return data_rel
 
 
@@ -850,7 +853,12 @@ def plot_picking(
 
             for ax in (ax1, ax2, ax3, ax4):
                 ax.legend(loc="upper right")
-                ax.grid(True, which="both", axis="both", alpha=0.35)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+                ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
+                ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+                ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
+                ax.grid(True, which="minor", axis="both", linestyle=":",  alpha=0.3)
+                
             ax4.legend(loc="upper right", ncol=3)
 
             if is_time:
@@ -876,7 +884,7 @@ def plot_picking(
 
 
 ## ====== Calculate hypocenter and origin time ====== 
-def calc_pred(mp, vp, vs, data):
+def _calc_pred(mp, vp, vs, data):
     """
     추정 진원(mp, [X,Y,Z,T])과 속도(vp, vs)로 각 관측소의 예상 도달시각/거리 등을 계산합니다.
 
@@ -907,7 +915,7 @@ def calc_pred(mp, vp, vs, data):
     data["S_arrival_pred"] = (hypo_dist / vs) + mp[3]
     return data
 
-def calc_res(data):
+def _calc_res(data):
     """
     관측(UTCDateTime)과 예측(초) 사이의 P/S 도달시각 잔차를 계산합니다.
 
@@ -940,7 +948,7 @@ def calc_res(data):
     return res_p, res_s, valid_s
 
 
-def calc_G(mp, vp, vs, data, valid_s):
+def _calc_G(mp, vp, vs, data, valid_s):
     """
     P/S 도달시각에 대한 선형화 G 행렬을 계산합니다.
 
@@ -1001,7 +1009,7 @@ def calc_G(mp, vp, vs, data, valid_s):
     return G
 
 
-def Calc_rms(res_p, res_s):
+def _calc_rms(res_p, res_s):
     """
     P/S 잔차를 합쳐 전체 잔차 벡터와 RMS를 계산합니다.
 
@@ -1022,7 +1030,7 @@ def Calc_rms(res_p, res_s):
     return res, rms
 
 
-def get_dm(G, res):
+def _get_dm(G, res):
     """
     (G^T G) dm = G^T res 방정식을 CG로 풀어 모델 증분 dm을 구합니다.
 
@@ -1071,7 +1079,7 @@ def _calc_km2deg(standard_lat, standard_lon, y_km, x_km):
     return y, x
 
 
-def calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
+def _calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     """
     기준점(최초 P 도달 관측소) 기준의 (Y,X)[km]를 위/경도(도)로 변환해 진원 좌표를 반환합니다.
 
@@ -1108,7 +1116,7 @@ def calc_hypocenter(data_rel, iteration=5,
     ----------
     data_rel : pandas.DataFrame
         상대 좌표/도달시각이 포함된 테이블.
-    iteration : int, default 10
+    iteration : int, default 5
         반복 횟수.
     mp : numpy.ndarray, default [0,0,10,0]
         초기 모델 [X_km, Y_km, Z_km, T_s].
@@ -1149,12 +1157,12 @@ def calc_hypocenter(data_rel, iteration=5,
 
     results = []
     for it in range(iteration):
-        pred_data = calc_pred(mp, vp, vs, data_rel)
-        res_p, res_s, valid_s = calc_res(pred_data)
+        pred_data = _calc_pred(mp, vp, vs, data_rel)
+        res_p, res_s, valid_s = _calc_res(pred_data)
 
-        G = calc_G(mp, vp, vs, pred_data, valid_s)
-        res, rms = Calc_rms(res_p, res_s)
-        dm = get_dm(G, res)
+        G = _calc_G(mp, vp, vs, pred_data, valid_s)
+        res, rms = _calc_rms(res_p, res_s)
+        dm = _get_dm(G, res)
         mp = mp + dm
 
         results.append([mp[0], mp[1], mp[2], mp[3], rms])
@@ -1163,7 +1171,7 @@ def calc_hypocenter(data_rel, iteration=5,
         north_km = float(mp[1])
         depth    = float(mp[2])
         T_abs    = float(mp[3])
-        lat_deg, lon_deg = calc_hypocenter_coords(data_rel, north_km, east_km)
+        lat_deg, lon_deg = _calc_hypocenter_coords(data_rel, north_km, east_km)
 
         # 한 줄로 포맷 출력
         print(
@@ -1186,7 +1194,7 @@ def calc_hypocenter(data_rel, iteration=5,
     T_abs    = float(result_df.iloc[-1]["T"])
     origin   = UTCDateTime(T_abs)
 
-    hypo_lat, hypo_lon = calc_hypocenter_coords(data_rel, north_km, east_km)
+    hypo_lat, hypo_lon = _calc_hypocenter_coords(data_rel, north_km, east_km)
     print(
         f"결정된 지진의 진원 요소 → 위도 : {hypo_lat:.5f}°, 경도 : {hypo_lon:.5f}°, "
         f"깊이 : {depth:.2f} km, 시각(UTC) : {_fmt_time_from_epoch(T_abs)}, RMS : {rms:.3f}"
@@ -1249,7 +1257,7 @@ def plot_hypocenter(
         raise ValueError("result_df에는 마지막 행 기준의 'X','Y'(km) 컬럼이 필요합니다.")
     east_km = float(result_df.iloc[-1]["X"])
     north_km = float(result_df.iloc[-1]["Y"])
-    hypo_lat, hypo_lon = calc_hypocenter_coords(data, north_km, east_km)
+    hypo_lat, hypo_lon = _calc_hypocenter_coords(data, north_km, east_km)
     hypo = (hypo_lat, hypo_lon)
 
     # 중심점 결정
