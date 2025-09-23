@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
 import numpy as np
+import os
 import pandas as pd
 import pickle
 import tensorflow as tf
@@ -19,12 +20,15 @@ from obspy import UTCDateTime, Stream, Trace
 from scipy.sparse.linalg import cg
 from pathlib import Path
 from typing import Any, Tuple, List, Optional
+
 try:
     from IPython.display import display as ipy_display
 except Exception:
     ipy_display = None
 
-    
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+
 def read_data(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool = True) -> pd.DataFrame:
     """
     관측소 메타데이터와 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
