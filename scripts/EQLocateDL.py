@@ -1351,7 +1351,7 @@ def plot_hypocenter(
     ).add_to(m)
 
     m.save(html_out)
-    display(m)
+    m
 
     
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
