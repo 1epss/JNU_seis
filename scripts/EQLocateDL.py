@@ -1209,6 +1209,7 @@ def plot_hypocenter(
     show_ring_labels: bool = True,
     use_auto_label: bool = True,
     rings_km: tuple[int, ...] = (30, 50, 100),
+    display: bool = True
 ) -> None:
     """
     Folium 지도에 관측소와 진원(필수), 선택적 반경 링을 표시하고 저장합니다.
@@ -1351,7 +1352,8 @@ def plot_hypocenter(
     ).add_to(m)
 
     m.save(html_out)
-    m
+    if display == True:
+        display(m)
 
     
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
@@ -1615,6 +1617,7 @@ if __name__ == "__main__":
         data_rel,
         result_df,
         html_out="hypocenter.html",
-        zoom_start=8
+        zoom_start=8,
+        display=False
     )
     print("결과가 hypocenter.html 파일로 저장되었습니다.")
