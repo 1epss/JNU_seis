@@ -1,0 +1,18 @@
+# Scientific core
+numpy==2.0.2
+pandas>=2.2,<2.3
+matplotlib>=3.9
+scipy>=1.12,<1.17
+
+# Visualization
+folium>=0.15,<0.17
+
+# Seismology
+obspy>=1.4,<1.5
+
+# Deep learning
+tensorflow==2.19.*
+
+# (optional) 개발 보조 툴
+# ruff>=0.5
+# mypy>=1.10
