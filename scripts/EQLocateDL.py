@@ -19,8 +19,12 @@ from obspy import UTCDateTime, Stream, Trace
 from scipy.sparse.linalg import cg
 from pathlib import Path
 from typing import Any, Tuple, List, Optional
+try:
+    from IPython.display import display as ipy_display
+except Exception:
+    ipy_display = None
 
-
+    
 def read_data(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool = True) -> pd.DataFrame:
     """
     관측소 메타데이터와 지진파형이 담긴 pickle(DataFrame) 파일을 불러옵니다.
@@ -1209,7 +1213,7 @@ def plot_hypocenter(
     show_ring_labels: bool = True,
     use_auto_label: bool = True,
     rings_km: tuple[int, ...] = (30, 50, 100),
-    display: bool = True
+    show_in_notebook: bool = True
 ) -> None:
     """
     Folium 지도에 관측소와 진원(필수), 선택적 반경 링을 표시하고 저장합니다.
@@ -1238,7 +1242,9 @@ def plot_hypocenter(
         반경 라벨을 자동 배치할지 여부.
     rings_km : tuple[int, ...], default (30, 50, 100)
         표시할 반경 값들(단위: km).
-
+    show_in_notebook : bool, default True
+        주피터/노트북 환경에서 지도를 즉시 표시할지 여부.
+        
     Returns
     -------
     None
@@ -1267,7 +1273,7 @@ def plot_hypocenter(
     m = folium.Map(
         width=900,
         height=900,
-        location=center,
+        location=hypo,
         zoom_start=zoom_start,
         control_scale=True,
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -1352,8 +1358,9 @@ def plot_hypocenter(
     ).add_to(m)
 
     m.save(html_out)
-    if display == True:
-        display(m)
+    
+    if show_in_notebook and ipy_display is not None:
+        ipy_display(m)
 
     
 # ====== THIRD-PARTY: detect_peaks (MIT) ======
@@ -1618,6 +1625,6 @@ if __name__ == "__main__":
         result_df,
         html_out="hypocenter.html",
         zoom_start=8,
-        display=False
+        show_in_notebook=False
     )
     print("결과가 hypocenter.html 파일로 저장되었습니다.")
