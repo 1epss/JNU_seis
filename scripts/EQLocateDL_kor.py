@@ -12,7 +12,7 @@ import pandas as pd
 import pickle
 import tensorflow as tf
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from folium import plugins
 from folium.features import DivIcon
 from numpy.typing import NDArray
@@ -28,6 +28,8 @@ except Exception:
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
+plt.rc('font', family='NanumBarunGothic') 
+plt.rcParams['axes.unicode_minus'] =False
 
 def 불러오기(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool = True) -> pd.DataFrame:
     """
@@ -53,20 +55,23 @@ def 불러오기(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool =
         print("지진 자료를 불러옵니다...")
         print("=" * 80)
         for _, row in data.iterrows():
-            print("Station: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
+            print("관측소명: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
                 net=row["network"],
                 sta=row["station"],
                 cha=row["channel"],
-                start=row["starttime"].strftime("%Y-%m-%d %H:%M:%S"),
-                end=row["endtime"].strftime("%Y-%m-%d %H:%M:%S")))
-            time.sleep(0.1)
+                start=(row["starttime"] + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S"),
+                end=(row["endtime"] + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")))
+            time.sleep(0.2)
         print("=" * 80)
         print(f"총 {len(data)}건의 자료를 불러왔습니다.")
 
     return data
 
 
-def 지진파_그리기(data: pd.DataFrame, 관측소: str) -> None:
+def 지진파_그리기(data: pd.DataFrame, 
+            관측소: str, 
+            starttime=UTCDateTime("2024-06-11T23:26:50"), 
+            endtime=UTCDateTime("2024-06-11T23:26:55")) -> None:
     """
     지정한 관측소의 3성분 파형을 시간축(UTC) 기준으로 플로팅합니다.
 
@@ -93,6 +98,12 @@ def 지진파_그리기(data: pd.DataFrame, 관측소: str) -> None:
     stream = row["data"]
 
     fig = plt.figure(figsize=(7, 5))
+    
+    def utc_to_kst(x, pos):
+        return (mdates.num2date(x) + timedelta(hours=9)).strftime("%H:%M:%S")
+
+    formatter = mticker.FuncFormatter(utc_to_kst)
+    
     for i, trace in enumerate(stream):
         ax = fig.add_subplot(len(stream), 1, i + 1)
 
@@ -102,10 +113,13 @@ def 지진파_그리기(data: pd.DataFrame, 관측소: str) -> None:
         time_vector = [(t0 + j * dt).datetime for j in range(n)]
 
         ax.plot(time_vector, trace.data, "k", label=trace.stats.channel[-1])
-        ax.set_ylabel("강도")
+        ax.set_ylabel("진폭")
         ax.legend(loc="upper right")
         
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+        if starttime and endtime:
+            ax.set_xlim([starttime.datetime, endtime.datetime])
+        
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(formatter))
         ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
         ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
         ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
@@ -114,7 +128,7 @@ def 지진파_그리기(data: pd.DataFrame, 관측소: str) -> None:
         if i < len(stream) - 1:
             ax.tick_params(labelbottom=False)
         else:
-            ax.set_xlabel("시간 (UTC)")
+            ax.set_xlabel("시간")
 
     plt.suptitle(f"{관측소} 관측소")
     plt.tight_layout()
@@ -570,21 +584,21 @@ def 인공지능모델(
                 # P파
                 if pd.notna(r["arrival_P"]):
                     p_arr = pd.to_datetime(str(r["arrival_P"]))
-                    p_arr_str = p_arr.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                    p_prob_str = f"{float(r['prob_P']) * 100:.2f}%"
+                    p_arr_str = (p_arr + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    #p_prob_str = f"{float(r['prob_P']) * 100:.2f}%"
                 else:
                     p_arr_str, p_prob_str = "-", "-"
 
                 # S파
                 if pd.notna(r["arrival_S"]):
                     s_arr = pd.to_datetime(str(r["arrival_S"]))
-                    s_arr_str = s_arr.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                    s_prob_str = f"{float(r['prob_S']) * 100:.2f}%"
+                    s_arr_str = (s_arr + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    #s_prob_str = f"{float(r['prob_S']) * 100:.2f}%"
                 else:
                     s_arr_str, s_prob_str = "-", "-"
 
                 print(
-                    f"Station: {sta} | "
+                    f"관측소명: {sta} | "
                     f"P파 도달시각: {p_arr_str} (확률 {p_prob_str}) | "
                     f"S파 도달시각: {s_arr_str} (확률 {s_prob_str})"
                 )
@@ -753,6 +767,8 @@ def 인공지능_결과그리기(
     twin: int = 3000,
     stride: int = 3000,
     verbose: bool = True,
+    starttime=UTCDateTime("2024-06-11T23:26:50"), 
+    endtime=UTCDateTime("2024-06-11T23:26:55")
 ) -> None:
     """
     단일 관측소에 대해 모델 추론(P/S 확률) 후 파형과 함께 플롯합니다.
@@ -819,6 +835,11 @@ def 인공지능_결과그리기(
                 times = np.arange(npts, dtype=float)
                 is_time = False
 
+            def utc_to_kst(x, pos):
+                return (mdates.num2date(x) + timedelta(hours=9)).strftime("%H:%M:%S")
+
+            formatter = mticker.FuncFormatter(utc_to_kst)
+
             fig, (ax1, ax2, ax3, ax4) = plt.subplots(
                 4, 1, figsize=(7, 5), sharex=True
             )
@@ -830,6 +851,9 @@ def 인공지능_결과그리기(
             ax4.plot(times, Y_med[:, 1], label="S", color="red", linestyle="--", zorder=10)
             ax4.plot(times, Y_med[:, 2], label="Noise", color="gray")
 
+            if starttime and endtime:
+                ax.set_xlim([starttime.datetime, endtime.datetime])
+            
             for ax in (ax1, ax2, ax3):
                 ax.tick_params(labelbottom=False, bottom=True)
                 ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
@@ -838,8 +862,8 @@ def 인공지능_결과그리기(
 
             if is_time:
                 ax4.xaxis.set_major_locator(mdates.AutoDateLocator())
-                ax4.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-                ax4.set_xlabel("시간 (UTC)")
+                ax4.xaxis.set_major_formatter(mdates.DateFormatter(formatter))
+                ax4.set_xlabel("시간")
             else:
                 ax4.xaxis.set_major_locator(mticker.MaxNLocator(nbins=6, integer=False))
                 ax4.set_xlabel("Sample Index")
@@ -854,9 +878,9 @@ def 인공지능_결과그리기(
                 ax.legend(loc="upper right")
             ax4.legend(loc="upper right", ncol=3)
 
-            ax1.set_ylabel("강도")
-            ax2.set_ylabel("강도")
-            ax3.set_ylabel("강도")
+            ax1.set_ylabel("진폭")
+            ax2.set_ylabel("진폭")
+            ax3.set_ylabel("진폭")
             ax4.set_ylabel("확률")
 
             fig.suptitle(f"{sta} 관측소")
