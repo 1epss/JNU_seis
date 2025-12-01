@@ -119,7 +119,7 @@ def 지진파_그리기(data: pd.DataFrame,
         if starttime and endtime:
             ax.set_xlim([starttime.datetime, endtime.datetime])
         
-        ax.xaxis.set_major_formatter(mdates.DateFormatter(formatter))
+        ax.xaxis.set_major_formatter(formatter)
         ax.xaxis.set_minor_locator(mticker.AutoMinorLocator())
         ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
         ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
@@ -585,7 +585,7 @@ def 인공지능모델(
                 if pd.notna(r["arrival_P"]):
                     p_arr = pd.to_datetime(str(r["arrival_P"]))
                     p_arr_str = (p_arr + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                    #p_prob_str = f"{float(r['prob_P']) * 100:.2f}%"
+                    p_prob_str = f"{float(r['prob_P']) * 100:.2f}%"
                 else:
                     p_arr_str, p_prob_str = "-", "-"
 
@@ -593,14 +593,14 @@ def 인공지능모델(
                 if pd.notna(r["arrival_S"]):
                     s_arr = pd.to_datetime(str(r["arrival_S"]))
                     s_arr_str = (s_arr + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                    #s_prob_str = f"{float(r['prob_S']) * 100:.2f}%"
+                    s_prob_str = f"{float(r['prob_S']) * 100:.2f}%"
                 else:
                     s_arr_str, s_prob_str = "-", "-"
 
                 print(
                     f"관측소명: {sta} | "
-                    f"P파 도달시각: {p_arr_str} (확률 {p_prob_str}) | "
-                    f"S파 도달시각: {s_arr_str} (확률 {s_prob_str})"
+                    f"P파 도달시각: {p_arr_str} | "
+                    f"S파 도달시각: {s_arr_str}"
                 )
                 time.sleep(0.1)
 
@@ -851,18 +851,18 @@ def 인공지능_결과그리기(
             ax4.plot(times, Y_med[:, 1], label="S", color="red", linestyle="--", zorder=10)
             ax4.plot(times, Y_med[:, 2], label="Noise", color="gray")
 
-            if starttime and endtime:
-                ax.set_xlim([starttime.datetime, endtime.datetime])
-            
             for ax in (ax1, ax2, ax3):
                 ax.tick_params(labelbottom=False, bottom=True)
                 ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
                 ax.grid(True, which="major", axis="both", linestyle="--", alpha=0.5)
                 ax.grid(True, which="minor", axis="both", linestyle=":", alpha=0.3)
 
+                if starttime and endtime:
+                    ax.set_xlim([starttime.datetime, endtime.datetime])
+                
             if is_time:
                 ax4.xaxis.set_major_locator(mdates.AutoDateLocator())
-                ax4.xaxis.set_major_formatter(mdates.DateFormatter(formatter))
+                ax4.xaxis.set_major_formatter(formatter)
                 ax4.set_xlabel("시간")
             else:
                 ax4.xaxis.set_major_locator(mticker.MaxNLocator(nbins=6, integer=False))
