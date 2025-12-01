@@ -55,7 +55,7 @@ def 불러오기(pkl_path: str | Path = "buan2024_practice.pkl", verbose: bool =
         print("지진 자료를 불러옵니다...")
         print("=" * 80)
         for _, row in data.iterrows():
-            print("관측소명: {sta:<5} | 기간(UTC): {start} ~ {end}".format(
+            print("관측소명: {sta:<5} | 기간: {start} ~ {end}".format(
                 net=row["network"],
                 sta=row["station"],
                 cha=row["channel"],
@@ -1116,7 +1116,7 @@ def _calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     return hypo_lat_deg, hypo_lon_deg
 
 
-def 진원결정(data_rel, iteration=5,
+def 진원_결정하기(data_rel, iteration=5,
                     mp=np.array([0.0, 0.0, 10.0, 0.0]),
                     vp=np.mean([5.63, 6.17]),
                     vs=np.mean([3.39, 3.61])):
@@ -1162,7 +1162,7 @@ def 진원결정(data_rel, iteration=5,
     if mp[3] == 0.0:
         mp[3] = float(mean_origin.timestamp)
 
-    print('선형화 역산을 수행합니다...')
+    print('지진이 발생한 위치와 시각을 계산합니다...')
     header_bar = "=" * 120
     print(header_bar)
 
@@ -1186,12 +1186,11 @@ def 진원결정(data_rel, iteration=5,
 
         # 한 줄로 포맷 출력
         print(
-            f"Iteration {it+1:<2d} | "
+            f"계산중.. {it+1:<2d} | "
             f"위도: {lat_deg:>8.5f}° | "
             f"경도: {lon_deg:>9.5f}° | "
             f"깊이: {depth:>6.2f} km | "
-            f"시각(UTC): {_fmt_time_from_epoch(T_abs):<26} | "
-            f"RMS: {rms:>7.3f}"
+            f"발생 시각(UTC): {_fmt_time_from_epoch(T_abs):<26} | "
         )
         time.sleep(0.8)   # 각 iteration마다 출력 간격
 
@@ -1209,14 +1208,13 @@ def 진원결정(data_rel, iteration=5,
 
     print("\n")
     print(header_bar)
-    print("결정된 지진의 진원 요소")
+    print("결정된 지진의 위치와 발생 시각")
     print(header_bar)
     print(
     f"{'위도':>12} | "
     f"{'경도':>12} | "
     f"{'깊이':>12} | "
     f"{'진원시(UTC)':>26} | "
-    f"{'RMS':>12}"
     )
     print(
     f"{hypo_lat:>13.5f}°| "
@@ -1343,7 +1341,7 @@ def 진원_그리기(
     folium.Marker(
         location=[hypo_lat, hypo_lon],
         icon=folium.Icon(color="red", icon="star", prefix="fa"),
-        tooltip="Hypocenter",
+        tooltip="진원",
     ).add_to(m)
 
     # 반경 원/라벨
