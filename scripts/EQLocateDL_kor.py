@@ -481,7 +481,7 @@ def _get_picks(Y_total: NDArray[np.floating], network: str, station: str, channe
     return arr_lst
 
 
-def 인공지능모델(
+def 인공지능(
     data: pd.DataFrame,
     model: str = 'KFpicker_20230217.h5',
     twin: int = 3000,
@@ -760,7 +760,7 @@ def _build_relative_dataset(data: pd.DataFrame, picks_total: pd.DataFrame, origi
     return data_rel
 
 
-def 인공지능_결과그리기(
+def 인공지능_그리기(
     data: pd.DataFrame,
     관측소: str,
     model_path: str = "KFpicker_20230217.h5",
@@ -1116,7 +1116,7 @@ def _calc_hypocenter_coords(data, hypo_lat_km, hypo_lon_km):
     return hypo_lat_deg, hypo_lon_deg
 
 
-def 진원_결정하기(data_rel, iteration=5,
+def 진원결정(data_rel, iteration=5,
                     mp=np.array([0.0, 0.0, 10.0, 0.0]),
                     vp=np.mean([5.63, 6.17]),
                     vs=np.mean([3.39, 3.61])):
@@ -1190,7 +1190,7 @@ def 진원_결정하기(data_rel, iteration=5,
             f"위도: {lat_deg:>8.5f}° | "
             f"경도: {lon_deg:>9.5f}° | "
             f"깊이: {depth:>6.2f} km | "
-            f"발생 시각(UTC): {_fmt_time_from_epoch(T_abs):<26} | "
+            f"발생 시각: {_fmt_time_from_epoch(T_abs + timedelta(hours=9)):<26} | "
         )
         time.sleep(0.8)   # 각 iteration마다 출력 간격
 
@@ -1211,17 +1211,16 @@ def 진원_결정하기(data_rel, iteration=5,
     print("결정된 지진의 위치와 발생 시각")
     print(header_bar)
     print(
-    f"{'위도':>12} | "
-    f"{'경도':>12} | "
-    f"{'깊이':>12} | "
-    f"{'진원시(UTC)':>26} | "
+    f"{'위도':>12}  "
+    f"{'경도':>12}  "
+    f"{'깊이':>12}  "
+    f"{'발생 시각':>26}  "
     )
     print(
-    f"{hypo_lat:>13.5f}°| "
-    f"{hypo_lon:13.5f}°| "
-    f"{depth:11.2f} km | "
-    f"{_fmt_time_from_epoch(T_abs):>29} | "
-    f"{rms:12.3f}"
+    f"{hypo_lat:>13.5f}° "
+    f"{hypo_lon:13.5f}° "
+    f"{depth:11.2f} km  "
+    f"{_fmt_time_from_epoch(T_abs + timedelta(hours=9)):>29}  "
     )
     print(header_bar)
 
