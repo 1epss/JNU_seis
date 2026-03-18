@@ -1362,7 +1362,7 @@ def plot_hypocenter(
             location=(lat, lon),
             icon=DivIcon(html="""
             <div style="
-                font-size: 14px;
+                font-size: 20px;
                 color: white;
                 padding: 4px 6px;
                 border-radius: 5px;
