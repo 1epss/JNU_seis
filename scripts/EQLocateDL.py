@@ -1356,22 +1356,22 @@ def plot_hypocenter(
 
     # 학교 마커
     if school is not None:
-    lat, lon = float(school[0]), float(school[1])
+        lat, lon = float(school[0]), float(school[1])
 
-    folium.Marker(
-        location=(lat, lon),
-        icon=DivIcon(html="""
-        <div style="
-            font-size: 14px;
-            color: white;
-            background-color: blue;
-            padding: 4px 6px;
-            border-radius: 5px;
-            ">
-            🏫
-        </div>
-        """)
-        ).add_to(m)
+        folium.Marker(
+            location=(lat, lon),
+            icon=DivIcon(html="""
+            <div style="
+                font-size: 14px;
+                color: white;
+                background-color: blue;
+                padding: 4px 6px;
+                border-radius: 5px;
+                ">
+                🏫
+            </div>
+            """)
+            ).add_to(m)
     
     # 전체 화면 버튼
     plugins.Fullscreen(
