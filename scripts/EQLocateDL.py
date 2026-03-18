@@ -1364,7 +1364,6 @@ def plot_hypocenter(
             <div style="
                 font-size: 14px;
                 color: white;
-                background-color: blue;
                 padding: 4px 6px;
                 border-radius: 5px;
                 ">
